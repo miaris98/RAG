@@ -1,0 +1,113 @@
+# This docker-compose.yml file is a blueprint for the RAG pipeline.
+# It defines all the services you requested and how they should be connected.
+# To make this a functional application, you would need to create the
+# other files referenced in this blueprint (e.g., Dockerfiles, Python scripts).
+
+version: '3.8'
+
+services:
+
+  # RabbitMQ Message Broker
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"   # Standard RabbitMQ port
+      - "15672:15672" # Management UI port
+    networks:
+      - rag-network
+    restart: unless-stopped
+    volumes:
+      # This volume ensures data and configuration persist
+      - rabbitmq-data:/var/lib/rabbitmq/
+
+  # Milvus Vector Database
+  milvus:
+    image: milvusdb/milvus:v2.3.0
+    container_name: milvus
+    command: ["milvus", "run", "standalone"]
+    ports:
+      - "19530:19530" # Milvus client port
+    environment:
+      - MILVUS_ETCD_USE_EMBEDDED=true
+    networks:
+      - rag-network
+    restart: unless-stopped
+    volumes:
+      # This volume ensures your vector data is not lost on container restart
+      - milvus-data:/var/lib/milvus
+
+  # Ollama Service (for the local LLM and embedding model)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    # Mount the model path to persist downloaded models
+    volumes:
+      - ollama-data:/root/.ollama
+    # This mounts the Docker socket, allowing Ollama to create its own containers.
+    # It's an advanced setup, use with caution.
+    # Alternatively, you can run Ollama on the host machine.
+    # - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "11434:11434" # Ollama API port
+    networks:
+      - rag-network
+    restart: unless-stopped
+    # Use a health check to ensure Ollama is ready before other services start
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # FastAPI Backend (Your Python application logic)
+  fastapi-backend:
+    build:
+      context: ./backend # Assumes you have a 'backend' directory with a Dockerfile and your Python code
+      dockerfile: Dockerfile
+    container_name: fastapi-backend
+    ports:
+      - "8000:8000"
+    networks:
+      - rag-network
+    depends_on:
+      # This ensures the backend starts only after these services are ready
+      milvus:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      # This mounts your local code into the container for easy development
+      - ./backend:/app
+
+  # Gradio Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    ports:
+      - "7860:7860" # Gradio port
+    networks:
+      - rag-network
+    depends_on:
+      # The frontend needs the backend to be running to make API calls
+      fastapi-backend:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./frontend:/app
+
+# Define the network for all services to communicate
+networks:
+  rag-network:
+    driver: bridge
+
+# Define named volumes to persist data
+volumes:
+  rabbitmq-data:
+  milvus-data:
+  ollama-data:

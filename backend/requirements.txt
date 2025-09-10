@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+pika
+python-dotenv
+pymilvus
+requests
+pydantic
