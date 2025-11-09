@@ -1,2 +1,11 @@
 gradio
 requests
+fastapi
+uvicorn
+pypdf
+sentence-transformers
+faiss-cpu
+langchain-text-splitters
+langchain
+langchain-community
+langchain-core

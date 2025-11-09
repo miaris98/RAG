@@ -4,8 +4,8 @@ import json
 
 # Define the base URL for the FastAPI backend service
 # This hostname must match the service name in your docker-compose.yml
-BACKEND_URL = "http://fastapi-backend:8000"
-
+# BACKEND_URL = "http://fastapi-backend:8000"
+BACKEND_URL = "http://localhost:8000"
 
 # --- Backend API Calls ---
 
