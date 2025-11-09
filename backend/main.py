@@ -95,5 +95,25 @@ async def ingest_document(doc: Document):
         raise HTTPException(status_code=500, detail=f"Failed to create RAG pipeline: {e}")
 
 
+@app.post("/query")
+async def process_query(query: Query):
+    global qa_agent
+    if not qa_agent:
+        raise HTTPException(status_code=404, detail="No document has been ingested yet.")
 
+    try:
+        # Instead of qa_agent.run(query.text), do:
+        response = qa_agent.invoke({"input": query.text})
+
+        # If the response is a dict, you can extract output:
+        if isinstance(response, dict):
+            output_text = response.get("output", str(response))
+        else:
+            output_text = str(response)
+
+        return {"response": output_text, "verified": True}
+
+    except Exception as e:
+        print(f"Error during query: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process query: {e}")
 
