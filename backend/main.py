@@ -30,17 +30,28 @@ def create_rag_agent(vectorstore, llm):
     """Creates a ReAct agent with a retriever tool."""
     retriever = vectorstore.as_retriever()
 
-    # Explicitly name the tool
     @tool(description="Retrieve relevant documents from ingested content")
     def document_retriever(query: str):
-        """Return relevant document text in a dict."""
+        """Return relevant document text."""
         docs = retriever.invoke(query)
-        return {"output": "\n\n".join([doc.page_content for doc in docs])}
+        # --- THIS IS THE CHANGE ---
+        # Return a simple string. The agent will handle it.
+        return "\n\n".join([doc.page_content for doc in docs])
 
+    # This system prompt is still the best one to use
+    system_prompt = """You are an assistant for question-answering tasks.
+    You must use the 'document_retriever' tool to find relevant information to answer the user's question.
+    Your final answer should be based *only* on the content returned by the tool.
+    Do not use your own knowledge.
+    If the tool returns information, synthesize it into a clear answer.
+    If the tool returns no relevant information, just say 'I could not find an answer in the documents.'
+    """
+
+    # Your original create_agent call was correct!
     agent = create_agent(
         model=llm,
         tools=[document_retriever],
-        system_prompt="You are a helpful assistant that can use the document_retriever tool to answer queries directly.",
+        system_prompt=system_prompt,
         debug=True
     )
     return agent
@@ -88,17 +99,30 @@ async def process_query(query: Query):
         raise HTTPException(status_code=404, detail="No document ingested yet.")
 
     try:
-        # Invoke the agent with plain text
-        response = qa_agent.invoke({"input": query.text})
+        # --- FIX 1: Correct Input Format ---
+        # Pass the user's query in the 'messages' list format
+        inputs = {"messages": [{"role": "user", "content": query.text}]}
 
-        if hasattr(response, "content"):
-            output_text = response.content
-        elif isinstance(response, dict) and "output" in response:
-            output_text = response["output"]
+        # Invoke the agent graph
+        response = qa_agent.invoke(inputs)
+
+        # --- FIX 2: Correct Output Parsing ---
+        # The response is the final state dict. We need to
+        # extract the last message, which is the AI's answer.
+        if isinstance(response, dict) and "messages" in response:
+            final_message = response["messages"][-1]
+
+            # The final_message is an AIMessage object
+            if hasattr(final_message, "content"):
+                output_text = final_message.content
+            else:
+                output_text = str(final_message)  # Fallback
         else:
+            # Fallback for an unexpected response
             output_text = str(response)
 
         return {"response": output_text, "verified": True}
 
     except Exception as e:
+        print(f"Error during query: {e}")  # Good for debugging
         raise HTTPException(status_code=500, detail=f"Query failed: {e}")
