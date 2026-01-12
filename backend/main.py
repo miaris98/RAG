@@ -15,10 +15,39 @@ from langchain_community.tools import DuckDuckGoSearchRun
 # LangGraph Prebuilt ReAct Agent
 from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
+import os
+import pika  # <--- Added missing import
+from pymilvus import connections, Collection, utility #
+
 
 # --- App & Global State ---
 app = FastAPI()
+# --- CONFIGURATION ---
 
+# 1. RabbitMQ Config
+# Default to 127.0.0.1 for local testing, but allow Docker to override it
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "127.0.0.1")
+
+# 2. Milvus Config
+# Default to 127.0.0.1 for local testing
+MILVUS_HOST = os.getenv("MILVUS_HOST", "127.0.0.1")
+
+# 3. Ollama Config
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+
+# --- CONNECTIONS ---
+
+# Connect to Milvus
+print(f"Connecting to Milvus at {MILVUS_HOST}...")
+connections.connect("default", host=MILVUS_HOST, port="19530")
+
+# Connect to RabbitMQ
+print(f"Connecting to RabbitMQ at {RABBITMQ_HOST}...")
+connection = pika.BlockingConnection(
+    pika.ConnectionParameters(host=RABBITMQ_HOST)
+)
+channel = connection.channel()
+channel.queue_declare(queue='rag_jobs')
 # Global State
 vectorstore = None
 graph = None  # This will hold our compiled LangGraph executable
@@ -110,7 +139,7 @@ def initialize_graph():
         model=llm,
         tools=tools,
         checkpointer=memory,
-        prompt=system_prompt  # <--- This is the correct parameter now
+        prompt=system_prompt
     )
 
 

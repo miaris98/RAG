@@ -9,3 +9,5 @@ langchain-text-splitters
 langchain
 langchain-community
 langchain-core
+pika
+pymilvus

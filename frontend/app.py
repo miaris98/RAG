@@ -5,7 +5,20 @@ import json
 # Define the base URL for the FastAPI backend service
 # This hostname must match the service name in your docker-compose.yml
 # BACKEND_URL = "http://fastapi-backend:8000"
-BACKEND_URL = "http://localhost:8000"
+import os
+import requests
+
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
+
+def query_rag(prompt):
+    try:
+        # 1. Send job to backend
+        response = requests.post(f"{BACKEND_URL}/submit-job", json={"prompt": prompt})
+        response.raise_for_status()
+        job_id = response.json().get("job_id")
+        return f"Job submitted! ID: {job_id}. Check RabbitMQ or logs for results."
+    except Exception as e:
+        return f"Error: {str(e)}"
 
 # --- Backend API Calls ---
 
