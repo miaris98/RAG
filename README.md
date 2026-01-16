@@ -1,82 +1,163 @@
-# RAG (Retrieval-Augmented Generation) Pipeline
+# 📚 RAG Workflow: Local Docker Deployment
 
-This project is a multi-service application that demonstrates a complete offline and online RAG workflow using Docker Compose. It features a scalable, event-driven ingestion pipeline and a real-time query application.
+This project implements a Retrieval-Augmented Generation (RAG) system using a microservices architecture orchestrated by Docker Compose. It allows users to ingest documents, chunk/embed them into a vector database, and query them using a local LLM.
 
-## 🚀 Architecture
+## 🏗️ Architecture Overview
 
-The system is built as a set of interconnected microservices managed by Docker Compose. The workflow is split into two main parts:
+| Service | Technology | Internal Port | External Port | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| **Frontend** | Gradio | `7860` | **7860** | User interface for ingestion and querying. |
+| **Backend** | FastAPI | `8000` | **8000** | API handling logic, LangGraph agent, and ingestion. |
+| **LLM** | Ollama | `11434` | **11434** | Hosts the local LLM (`llama3.1`). |
+| **Vector DB** | Milvus | `19530` | **19530** | Stores document embeddings. |
+| **Queue** | RabbitMQ | `5672` | **15672** (UI) | Manages async jobs (infrastructure ready). |
+| **Storage** | MinIO | `9000` | N/A | Object storage dependency for Milvus. |
+| **Coordination**| Etcd | `2379` | N/A | Metadata storage dependency for Milvus. |
 
--   **Offline Ingestion Pipeline:** An event-driven workflow that watches for new documents, chunks them, and stores their vector embeddings in a database.
--   **Online RAG Application:** A user-facing application that takes queries, retrieves relevant information from the vector database, and uses an LLM to generate a response.
-
-### Core Components
-
--   **FastAPI Backend (`fastapi-backend`):** The central hub of the application. It handles document ingestion, query orchestration, and communication with all other services.
--   **Gradio Frontend (`frontend`):** A simple, interactive user interface for ingesting documents and submitting queries.
--   **RabbitMQ (`rabbitmq`):** The message broker that acts as the "central nervous system" for the ingestion pipeline.
--   **Milvus (`milvus`):** The vector database that stores and indexes the document embeddings for efficient retrieval.
--   **Ollama (`ollama`):** The service that provides a local, self-hosted LLM and embedding model.
+---
 
 ## ✅ Prerequisites
 
-Ensure you have the following installed on your machine:
+1.  **Docker Desktop** installed and running.
+2.  **Git** (optional, for cloning).
+3.  **Hardware:** Minimum **8GB-16GB RAM** recommended (running Milvus + Ollama Llama 3 concurrently is resource-intensive).
 
--   **Docker:** https://www.docker.com/get-started
--   **Docker Compose:** Comes with modern Docker installations.
+---
 
-## 💡 Getting Started
+## 🚀 Quick Start Guide
 
-Follow these steps to build and run the entire application.
+### 1. Setup Project Structure
+Ensure your files are organized exactly as shown below:
 
-### Step 1: Create the Project Structure
-
-Create the project directories and files as follows. You should already have the `docker-compose.yml` file.
-
-```sh
-mkdir my-rag-project
-cd my-rag-project
-mkdir backend
-mkdir frontend
-
-# Create the requirements.txt and Dockerfile for the backend
-touch backend/requirements.txt
-touch backend/Dockerfile
-
-# Create the main Python application file for the backend
-touch backend/main.py
-
-# Create the requirements.txt and Dockerfile for the frontend
-touch frontend/requirements.txt
-touch frontend/Dockerfile
-
-# Create the main Python application file for the frontend
-touch frontend/app.py
-
+```text
+RAG/
+├── backend/
+│   ├── Dockerfile
+│   ├── main.py
+│   └── requirements.txt
+├── frontend/
+│   ├── Dockerfile
+│   ├── app.py
+│   └── requirements.txt
+└── docker-compose.yml
 ```
-### Step 2: Populate the Files
 
-Use the content provided to you for each of the files you just created.
+### 2. Build and Start Services
+Open your terminal in the `RAG/` root directory and run:
 
--   **`backend/requirements.txt`**: List of Python dependencies for the FastAPI app.
--   **`backend/Dockerfile`**: Instructions to build the backend Docker image.
--   **`backend/main.py`**: The core FastAPI application logic.
--   **`frontend/requirements.txt`**: List of Python dependencies for the Gradio app.
--   **`frontend/Dockerfile`**: Instructions to build the frontend Docker image.
--   **`frontend/app.py`**: The Gradio UI and logic for interacting with the backend.
-
-### Step 3: Launch the Application
-
-From the root of your project directory (`my-rag-project/`), run the following command. This will build the images and start all the services. The `--build` flag ensures that your `Dockerfile`s are executed.
-
-```sh
-docker-compose up --build
+```bash
+docker-compose up -d --build
 ```
-Wait a few moments for all services to start. You will see logs from each container in your terminal.
+* `-d`: Runs containers in detached mode (background).
+* `--build`: Forces a rebuild of the backend/frontend images.
 
-## 💻 Usage
+### 3. ⚠️ Critical Step: Pull the LLM Model
+The **Ollama** container starts empty. You must pull the specific model defined in `backend/main.py` (`llama3.1`) for the backend to work.
 
-Once the application is running, you can access the Gradio frontend.
+Run this command while the containers are running:
+```bash
+docker exec -it ollama ollama pull llama3.1
+```
+*Wait for the download to complete (approx. 4.7GB).*
 
-1.  Open your web browser and navigate to: http://localhost:7860
-2.  Paste a document into the "Ingest a Document" text box and click "Ingest Document."
-3.  Once the ingestion status shows success, you can enter a query in the "Query the RAG System" text box and see the LLM's response based on the retrieved context.
+---
+
+## 🖥️ How to Use
+
+### 1. Access the Interfaces
+* **User Interface (Gradio):** [http://localhost:7860](http://localhost:7860)
+* **Backend Documentation (Swagger UI):** [http://localhost:8000/docs](http://localhost:8000/docs)
+* **RabbitMQ Management:** [http://localhost:15672](http://localhost:15672) (User/Pass: `guest`/`guest`)
+
+### 2. Run a RAG Workflow
+1.  Open the **Gradio UI**.
+2.  **Ingest:** Paste text into the "Ingest a Document" box and click **Ingest Document**.
+    * *Check:* You should see a success message indicating chunking and embedding are complete.
+3.  **Query:** Type a question related to that text in the "Query" box and click **Submit Query**.
+    * *Result:* The LLM will answer based on the context retrieved from Milvus.
+
+---
+
+## 🔍 Monitoring & Logs (The Detailed View)
+
+When things go wrong, you need to check the logs of specific containers. Here is how to view and interpret them.
+
+### 1. View All Logs Live
+To see a stream of logs from all services at once:
+```bash
+docker-compose logs -f
+```
+*(Press `Ctrl+C` to exit)*
+
+### 2. Backend Logs (FastAPI)
+Check here for Python errors, connection issues with Milvus/Ollama, or LangChain errors.
+```bash
+docker-compose logs -f fastapi-backend
+```
+**Look for:**
+* `Application startup complete`: The API is ready.
+* `Connecting to Milvus...`: Connection attempts.
+* `HTTPException`: Errors processing requests.
+
+### 3. Frontend Logs (Gradio)
+Check here if the UI isn't loading or if buttons aren't responding.
+```bash
+docker-compose logs -f frontend
+```
+**Look for:**
+* `Running on local URL:  http://0.0.0.0:7860`: The UI is successfully hosted.
+
+### 4. Ollama Logs (LLM)
+Check here if the model isn't generating text or if the model pull failed.
+```bash
+docker-compose logs -f ollama
+```
+**Look for:**
+* `msg="inference compute"`: Indicates the model is actively processing a prompt.
+* `Error: model "llama3.1" not found`: You forgot the "Critical Step" (Step 3 above).
+
+### 5. Vector DB Logs (Milvus)
+Milvus is complex. If it fails, check the standalone container.
+```bash
+docker-compose logs -f milvus
+```
+**Look for:**
+* `Milvus Proxy started successfully`: The database is ready to accept connections.
+
+---
+
+## 🛠️ Troubleshooting Common Issues
+
+### ❌ Error: "Model not found" or "Connection refused" to Ollama
+* **Cause:** You didn't pull the model inside the container.
+* **Fix:** Run `docker exec -it ollama ollama pull llama3.1`.
+* **Check:** Run `docker exec -it ollama ollama list` to verify the model exists.
+
+### ❌ Error: "Failed to connect to backend" in Gradio
+* **Cause:** The frontend container cannot reach the backend container.
+* **Fix:** Ensure `docker-compose.yml` has `backend` service named `fastapi-backend` and the frontend `BACKEND_URL` environment variable matches that name (e.g., `http://fastapi-backend:8000`).
+* **Check:** Your provided `docker-compose.yml` correctly sets this up.
+
+### ❌ Error: Milvus Connection Timeout
+* **Cause:** Milvus takes a while to start (longer than the backend).
+* **Fix:** Restart just the backend service so it retries the connection:
+    ```bash
+    docker-compose restart fastapi-backend
+    ```
+
+### ❌ Port Conflicts (e.g., "Port 8000 is already in use")
+* **Cause:** You have another process (or another Docker instance) running on that port.
+* **Fix:** Stop the other process or change the left-side port in `docker-compose.yml` (e.g., `"8001:8000"`).
+
+---
+
+## 🧹 Cleanup
+To stop all containers and remove the networks (data in volumes will persist):
+```bash
+docker-compose down
+```
+
+To stop everything and **delete all data** (RabbitMQ queues, Milvus vectors, Ollama models):
+```bash
+docker-compose down -v
+```

@@ -53,11 +53,19 @@ vectorstore = None
 graph = None  # This will hold our compiled LangGraph executable
 
 # LLM Setup (Global)
+# llm = ChatOpenAI(
+#     temperature=0,  # Lower temp is better for tool use
+#     openai_api_base="http://localhost:1234/v1",
+#     openai_api_key="lm-studio",
+#     model_name="meta-llama-3-8b-instruct"
+# )
+
 llm = ChatOpenAI(
-    temperature=0,  # Lower temp is better for tool use
-    openai_api_base="http://localhost:1234/v1",
-    openai_api_key="lm-studio",
-    model_name="meta-llama-3-8b-instruct"
+    temperature=0,
+    # Change port 1234 to 11434 if using Ollama
+    openai_api_base="http://host.docker.internal:11434/v1",
+    openai_api_key="ollama", # Key can be anything for Ollama
+    model_name="llama3.1" # Make sure this matches the model you pulled in Ollama
 )
 
 
