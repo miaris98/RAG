@@ -120,7 +120,17 @@ services:
     restart: unless-stopped
     volumes:
       - ./frontend:/app
-
+  attu:
+    image: zilliz/attu:v2.3.0
+    container_name: attu
+    environment:
+      MILVUS_URL: milvus-standalone:19530
+    ports:
+      - "9090:3000"  # We map it to 9090 to avoid conflict with other apps
+    depends_on:
+      - milvus
+    networks:
+      - rag-network
 networks:
   rag-network:
     driver: bridge

@@ -1,113 +1,128 @@
 import gradio as gr
 import requests
-import json
-
-# Define the base URL for the FastAPI backend service
-# This hostname must match the service name in your docker-compose.yml
-# BACKEND_URL = "http://fastapi-backend:8000"
 import os
-import requests
+import time
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 
-def query_rag(prompt):
-    try:
-        # 1. Send job to backend
-        response = requests.post(f"{BACKEND_URL}/submit-job", json={"prompt": prompt})
-        response.raise_for_status()
-        job_id = response.json().get("job_id")
-        return f"Job submitted! ID: {job_id}. Check RabbitMQ or logs for results."
-    except Exception as e:
-        return f"Error: {str(e)}"
 
 # --- Backend API Calls ---
 
 def ingest_document_to_backend(content):
-    """Sends a document to the FastAPI backend for ingestion."""
     payload = {"content": content}
     try:
         response = requests.post(f"{BACKEND_URL}/ingest", json=payload)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        return {"status": "error", "message": f"Failed to connect to backend: {e}"}
+        return {"status": "error", "message": f"Connection error: {e}"}
 
 
-def query_rag_backend(query):
-    """Sends a user query to the FastAPI backend and gets the RAG response."""
+def submit_job_to_backend(query):
+    """Submits a job to the RabbitMQ queue."""
     payload = {"text": query}
     try:
-        response = requests.post(f"{BACKEND_URL}/query", json=payload)
+        response = requests.post(f"{BACKEND_URL}/submit-job", json=payload)
         response.raise_for_status()
+        return response.json()  # Returns {'job_id': '...', 'status': 'queued'}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def get_job_result(job_id):
+    """Checks the status of a specific job."""
+    try:
+        response = requests.get(f"{BACKEND_URL}/get-job/{job_id}")
+        if response.status_code == 404:
+            return {"status": "not_found"}
         return response.json()
-    except requests.exceptions.RequestException as e:
-        return {"status": "error", "message": f"Failed to connect to backend: {e}"}
+    except Exception as e:
+        return {"status": "error", "result": str(e)}
 
 
 # --- Gradio UI Functions ---
 
 def ingest_document(content):
-    """Handles the document ingestion button click."""
     if not content:
-        return "Please enter a document to ingest."
-
+        return "Please enter a document."
     response = ingest_document_to_backend(content)
     if response.get("status") == "error":
-        return f"Ingestion failed: {response['message']}"
+        return f"Failed: {response['message']}"
+    return "✅ Document ingested! You can now submit queries."
 
-    return "Document ingestion initiated! It's being processed in the background. You can now submit a query."
 
-
-def rag_query(query):
-    """Handles the RAG query button click and displays the result."""
+def submit_query(query):
     if not query:
-        return "Please enter a query."
+        return "Please enter a query.", None
 
-    response = query_rag_backend(query)
+    response = submit_job_to_backend(query)
+    if "error" in response:
+        return f"Error: {response['error']}", None
 
-    if response.get("status") == "error":
-        return f"Query failed: {response['message']}"
+    job_id = response.get("job_id")
+    return f"Job Submitted! ID: {job_id}\nWait for processing...", job_id
 
-    llm_response = response.get("response", "No response from LLM.")
-    source_chunks = response.get("source_chunks", [])
-    verified = response.get("verified", False)
 
-    # Format the output with source chunks
-    output = f"**LLM Response:**\n{llm_response}\n\n"
-    output += f"**Verification:** {'✅ Verified' if verified else '❌ Not verified'}\n\n"
-    output += "**Source Chunks (Retrieved Context):**\n"
-    if source_chunks:
-        for i, chunk in enumerate(source_chunks):
-            output += f"- Chunk {i + 1}: {chunk}\n"
+def check_status(job_id):
+    if not job_id:
+        return "No active job. Submit a query first."
+
+    # Poll for result
+    status_response = get_job_result(job_id)
+    status = status_response.get("status")
+    result = status_response.get("result")
+    tools = status_response.get("tools", [])  # Get the list of tools
+
+    if status == "queued":
+        return f"⏳ Job {job_id} is QUEUED."
+    elif status == "processing":
+        return f"⚙️ Job {job_id} is PROCESSING..."
+    elif status == "completed":
+        # Format the Tool Usage
+        tool_icons = ""
+        if tools:
+            tool_icons = f"\n\n🛠️ **Tools Used:** `{', '.join(tools)}`"
+        else:
+            tool_icons = "\n\n🧠 **Source:** LLM Internal Knowledge (No tools used)"
+
+        return f"✅ **Result:**\n\n{result}{tool_icons}"
+
+    elif status == "failed":
+        return f"❌ Job Failed: {result}"
     else:
-        output += "No relevant chunks were found in the document."
-
-    return output
+        return "Unknown status."
 
 
 # --- Gradio Interface ---
-with gr.Blocks(title="RAG Workflow Demo") as demo:
-    gr.Markdown("# RAG Workflow Demo")
-    gr.Markdown(
-        "This interface simulates a Retrieval-Augmented Generation (RAG) pipeline by connecting to a FastAPI backend.")
-    gr.Markdown("---")
+with gr.Blocks(title="Async RAG Workflow") as demo:
+    gr.Markdown("# Async RAG Workflow (RabbitMQ)")
 
     with gr.Row():
         with gr.Column():
-            document_input = gr.Textbox(lines=10, label="1. Ingest a Document",
-                                        placeholder="Paste a document here to be chunked and embedded.")
-            ingest_btn = gr.Button("Ingest Document")
-            ingest_output = gr.Textbox(label="Ingestion Status", interactive=False)
+            doc_input = gr.Textbox(lines=8, label="1. Ingest Document")
+            ingest_btn = gr.Button("Ingest")
+            ingest_out = gr.Textbox(label="Ingestion Status")
 
         with gr.Column():
-            query_input = gr.Textbox(lines=5, label="2. Query the RAG System",
-                                     placeholder="Ask a question about the document.")
-            query_btn = gr.Button("Submit Query")
-            query_output = gr.Markdown(label="RAG Response")
+            q_input = gr.Textbox(lines=4, label="2. Submit Query")
+            submit_btn = gr.Button("Submit Job to Queue")
 
-    ingest_btn.click(ingest_document, inputs=document_input, outputs=ingest_output)
-    query_btn.click(rag_query, inputs=query_input, outputs=query_output)
+            # Hidden textbox to store Job ID for the UI logic
+            job_id_state = gr.State()
+
+            submission_out = gr.Textbox(label="Submission Status")
+
+            check_btn = gr.Button("Check Job Result")
+            final_output = gr.Markdown(label="Final Response")
+
+    # Wiring
+    ingest_btn.click(ingest_document, inputs=doc_input, outputs=ingest_out)
+
+    # Submit -> Updates text and stores Job ID in state
+    submit_btn.click(submit_query, inputs=q_input, outputs=[submission_out, job_id_state])
+
+    # Check Status -> Uses Job ID state to poll backend
+    check_btn.click(check_status, inputs=job_id_state, outputs=final_output)
 
 if __name__ == "__main__":
-    # The Gradio app needs to listen on 0.0.0.0 for Docker to expose it correctly.
     demo.launch(server_name="0.0.0.0", server_port=7860)
