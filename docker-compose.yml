@@ -90,6 +90,7 @@ services:
       - RABBITMQ_HOST=rabbitmq
       - MILVUS_HOST=milvus-standalone
       - OLLAMA_BASE_URL=http://ollama:11434
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     depends_on:
       milvus:
         condition: service_started

@@ -62,25 +62,46 @@ class QueryInput(BaseModel):
 @tool
 def document_retriever(query: str) -> str:
     """Find information inside uploaded documents."""
-    global vectorstore
+    import time
 
-    # Check if vectorstore is initialized. If not, try to load existing collection.
-    if vectorstore is None:
-        try:
-            vectorstore = Milvus(
-                embedding_function=embeddings,
-                collection_name="rag_documents",
-                connection_args={"host": MILVUS_HOST, "port": "19530"}
-            )
-        except Exception:
-            return "No documents have been uploaded yet."
+    # 1. Debug Print
+    print(f"\n[Worker Thread] 🔍 Executing Search for: '{query}'")
 
-    retriever = vectorstore.as_retriever()
-    docs = retriever.invoke(query)
-    if not docs:
-        return "No relevant information found."
-    return "\n\n".join([doc.page_content for doc in docs])
+    try:
+        # 2. Re-initialize Embeddings
+        local_embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
+        # 3. Connect to Milvus
+        vector_db = Milvus(
+            embedding_function=local_embeddings,
+            collection_name="rag_documents",
+            connection_args={"host": MILVUS_HOST, "port": "19530"},
+            consistency_level="Strong"
+        )
+
+        # 4. Run Search
+        docs = vector_db.similarity_search(query, k=5)
+        print(f"[Worker Thread] ✅ Found {len(docs)} documents.")
+
+        # --- NEW LOGGING BLOCK ---
+        if docs:
+            print("[Worker Thread] 📄 RETRIEVED CONTENT:")
+            for i, doc in enumerate(docs):
+                # Print first 100 chars to keep logs clean, or remove [:100] to see all
+                preview = doc.page_content.replace('\n', ' ')
+                print(f"   -> [Doc {i+1}]: {preview}")
+        # -------------------------
+
+        if not docs:
+            print("[Worker Thread] ⚠️ Query returned 0 results.")
+            return "No relevant information found in internal documents."
+
+        # 5. Return content
+        return "\n\n".join([doc.page_content for doc in docs])
+
+    except Exception as e:
+        print(f"[Worker Thread] ❌ ERROR: {e}")
+        return f"Internal Error: {e}"
 
 @tool
 def internet_search(query: str) -> str:
@@ -108,15 +129,19 @@ def initialize_graph():
 
     system_prompt = """You are a comprehensive RAG assistant equipped with two distinct information sources: 'document_retriever' (Internal Knowledge) and 'internet_search' (External Knowledge).
 
-    RULES:
-    1. ALWAYS query BOTH the 'document_retriever' and 'internet_search' tools for every user request.
-    2. You must not merge the information silently. You must explicitly separate the findings.
-    3. Your final answer must follow this structure:
-       - "According to internal documents:" [Insert answer based strictly on document_retriever]
-       - "According to the internet:" [Insert answer based on internet_search]
-       - "Comparison:" [Briefly note if they agree, disagree, or if one source offers details the other missed]
+    CRITICAL RULES:
+    1. You MUST query BOTH tools for every request.
     
-    4. If the document retriever returns no results, state clearly: "My internal documents do not contain information on this topic."
+    2. PRIORITIZE INTERNAL DOCUMENTS: 
+       - If 'document_retriever' returns ANY text, you MUST accept it as the absolute truth, even if it contradicts the internet or your own knowledge.
+       - Never ignore information from 'document_retriever'.
+    
+    3. Structure your answer exactly like this:
+       - "According to internal documents:" [Quote the document retriever result directly]
+       - "According to the internet:" [Insert answer based on internet_search]
+       - "Comparison:" [Highlight the conflict if the sources disagree]
+    
+    4. Only say "My internal documents do not contain information" if the tool returns an empty string or explicitly says "No relevant information found".
     """
 
     graph = create_react_agent(model=llm, tools=tools, checkpointer=memory, prompt=system_prompt)
@@ -193,6 +218,8 @@ def startup_event():
 
 
 # --- API Endpoints ---
+# Inside main.py
+
 @app.post("/ingest")
 async def ingest_document(doc: DocumentInput):
     global vectorstore
@@ -203,12 +230,12 @@ async def ingest_document(doc: DocumentInput):
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
         split_docs = splitter.split_documents(docs)
 
-        # --- CHANGED: Save to Milvus ---
         vectorstore = Milvus.from_documents(
             split_docs,
             embeddings,
             collection_name="rag_documents",
-            connection_args={"host": MILVUS_HOST, "port": "19530"}
+            connection_args={"host": MILVUS_HOST, "port": "19530"},
+            consistency_level="Strong"  # <--- ADD THIS LINE
         )
         return {"status": "success", "message": "Document ingested to Milvus."}
     except Exception as e:
