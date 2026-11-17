@@ -6,52 +6,116 @@ from typing import Any, Dict, List
 
 from app.agent.state import RAGGraphState
 from app.config import settings
+from app.guardrails.security import guardrails
 from app.models import RetrievedChunk
 from app.retrieval.embeddings import ModelRegistry
 from app.retrieval.hybrid import retrieval_engine
 from app.retrieval.reranker import tokenize_content_words
 
 
+TECHNICAL_ID_PATTERN = re.compile(r"\b[A-Z]{2,}(?:_[A-Z0-9]+)+|\b[A-Z]{2,}-[A-Z0-9-]{2,}\b")
+MULTIHOP_CONNECTORS = re.compile(r"\b(compare|versus|vs\.?|difference between|and also|both)\b", re.IGNORECASE)
+CONCEPTUAL_PREFIX = re.compile(r"^(explain|how does|why does|describe|what is the architecture)\b", re.IGNORECASE)
+
+
 def analyze_and_expand_query(state: RAGGraphState) -> Dict[str, Any]:
-    """Node 1: Normalizes the user query and generates lexical + semantic sub-queries."""
+    """Node 1 (Adaptive Query Router): Sanitizes query via Guardrails, classifies route
+    (lexical_lookup | conceptual_hyde | multi_hop | standard), and generates targeted sub-queries.
+    """
     t0 = time.perf_counter()
     raw_query = state.get("query", "").strip()
     enable_expansion = state.get("enable_query_expansion", True)
+    enable_guardrails = state.get("enable_guardrails", True)
 
-    expanded: List[str] = [raw_query]
+    guardrail_flags: List[str] = []
+    if enable_guardrails and raw_query:
+        raw_query, guardrail_flags = guardrails.sanitize_text(raw_query)
+
+    expanded: List[str] = [raw_query] if raw_query else []
+    query_route = "standard"
+    dense_weight = settings.dense_weight
+    sparse_weight = settings.sparse_weight
+
     if enable_expansion and raw_query:
         content_tokens = tokenize_content_words(raw_query)
-        if content_tokens:
-            # Lexical anchor query for BM25 exact identifier / entity recall
-            lexical_query = " ".join(content_tokens)
-            if lexical_query.lower() != raw_query.lower():
-                expanded.append(lexical_query)
-            # Semantic specification query for dense bi-encoder recall
-            if len(content_tokens) >= 2:
-                semantic_query = f"technical specification architecture and details for {' '.join(content_tokens)}"
-                expanded.append(semantic_query)
+
+        if TECHNICAL_ID_PATTERN.search(raw_query):
+            # Route A: Exact code / identifier lookup -> boost BM25 sparse weight
+            query_route = "lexical_lookup"
+            sparse_weight = 1.6
+            dense_weight = 0.8
+            if content_tokens:
+                lex_q = " ".join(content_tokens)
+                if lex_q.lower() != raw_query.lower():
+                    expanded.append(lex_q)
+
+        elif MULTIHOP_CONNECTORS.search(raw_query):
+            # Route B: Multi-Hop decomposition -> split compound comparison into independent sub-queries
+            query_route = "multi_hop"
+            parts = re.split(r"\b(?:with|and|versus|vs\.?|compared to)\b", raw_query, flags=re.IGNORECASE)
+            for part in parts:
+                cleaned_part = re.sub(r"^(compare|difference between)\s+", "", part.strip(), flags=re.IGNORECASE).strip(" ?.,")
+                if len(cleaned_part.split()) >= 2 and cleaned_part not in expanded:
+                    expanded.append(cleaned_part)
+            if content_tokens and len(expanded) < 3:
+                expanded.append(" ".join(content_tokens))
+
+        elif CONCEPTUAL_PREFIX.search(raw_query):
+            # Route C: Conceptual / architectural query -> HyDE (Hypothetical Document Embedding)
+            query_route = "conceptual_hyde"
+            dense_weight = 1.3
+            hyde_passage = (
+                f"Technical Architecture & Specification: {' '.join(content_tokens)}. "
+                f"In production systems, {' '.join(content_tokens)} operates through structured "
+                f"retrieval, verification, and consensus mechanisms to guarantee reliability."
+            )
+            expanded.append(hyde_passage)
+            if content_tokens:
+                expanded.append(" ".join(content_tokens))
+
+        else:
+            if content_tokens:
+                lex_q = " ".join(content_tokens)
+                if lex_q.lower() != raw_query.lower():
+                    expanded.append(lex_q)
+
+    tools = list(state.get("tools_used") or [])
+    if guardrail_flags and "security_guardrails" not in tools:
+        tools.append("security_guardrails")
 
     latencies = dict(state.get("stage_latencies_ms") or {})
-    latencies["query_expansion_ms"] = round((time.perf_counter() - t0) * 1000.0, 2)
+    latencies["query_routing_ms"] = round((time.perf_counter() - t0) * 1000.0, 2)
 
     return {
+        "query": raw_query,
+        "guardrail_flags": guardrail_flags,
+        "query_route": query_route,
         "expanded_queries": expanded,
+        "dense_weight": dense_weight,
+        "sparse_weight": sparse_weight,
+        "tools_used": tools,
         "stage_latencies_ms": latencies,
     }
 
 
 def retrieve_and_rerank(state: RAGGraphState) -> Dict[str, Any]:
-    """Node 2: Runs Two-Stage Hybrid Retrieval (Dense Milvus + BM25 RRF -> Cross-Encoder Reranker)."""
+    """Node 2: Runs Pre-Filtered RBAC + Tri-Modal Hybrid Retrieval + Cross-Encoder Reranking."""
     t0 = time.perf_counter()
     queries = state.get("expanded_queries") or [state.get("query", "")]
-    mode = state.get("retrieval_mode", "hybrid_rerank")
+    mode = state.get("retrieval_mode", "hybrid_graph_rerank")
     top_k = state.get("top_k", settings.rerank_top_k)
+    tenant_id = state.get("tenant_id", "default")
+    user_roles = state.get("user_roles")
 
     chunks: List[RetrievedChunk] = retrieval_engine.retrieve(
         queries=queries,
         mode=mode,  # type: ignore[arg-type]
         top_k=top_k,
         promote_parents=True,
+        tenant_id=tenant_id,
+        user_roles=user_roles,
+        dense_weight=float(state.get("dense_weight", settings.dense_weight)),
+        sparse_weight=float(state.get("sparse_weight", settings.sparse_weight)),
     )
     serialized_all = [c.model_dump() for c in chunks]
     serialized_relevant = [c.model_dump() for c in chunks if c.is_relevant]
@@ -59,7 +123,9 @@ def retrieve_and_rerank(state: RAGGraphState) -> Dict[str, Any]:
     tools = list(state.get("tools_used") or [])
     if "document_retriever" not in tools:
         tools.append("document_retriever")
-    if mode == "hybrid_rerank" and "cross_encoder_reranker" not in tools:
+    if mode == "hybrid_graph_rerank" and "entity_knowledge_graph" not in tools:
+        tools.append("entity_knowledge_graph")
+    if mode in ("hybrid_rerank", "hybrid_graph_rerank") and "cross_encoder_reranker" not in tools:
         tools.append("cross_encoder_reranker")
 
     latencies = dict(state.get("stage_latencies_ms") or {})

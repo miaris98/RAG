@@ -137,6 +137,8 @@ class ChunkingEngine:
         title: str = "Untitled Document",
         source: str = "manual_input",
         strategy: ChunkingStrategy = "parent_child",
+        tenant_id: str = "default",
+        access_roles: Optional[List[str]] = None,
         extra_metadata: Optional[Dict[str, Any]] = None,
     ) -> List[ChunkRecord]:
         """Splits a raw document into deterministic ChunkRecord items."""
@@ -144,15 +146,21 @@ class ChunkingEngine:
         if not cleaned:
             return []
 
-        doc_id = f"doc_{compute_content_hash(title, cleaned)[:16]}"
+        doc_id = f"doc_{compute_content_hash(f'{tenant_id}:{title}', cleaned)[:16]}"
+        roles = [r.strip().lower() for r in (access_roles or ["public"]) if r and r.strip()] or ["public"]
         base_meta = dict(extra_metadata or {})
 
         if strategy == "parent_child":
-            return self._chunk_parent_child(cleaned, doc_id, title, source, base_meta)
+            records = self._chunk_parent_child(cleaned, doc_id, title, source, base_meta)
         elif strategy == "contextual_recursive":
-            return self._chunk_contextual_recursive(cleaned, doc_id, title, source, base_meta)
+            records = self._chunk_contextual_recursive(cleaned, doc_id, title, source, base_meta)
         else:
-            return self._chunk_fixed(cleaned, doc_id, title, source, base_meta)
+            records = self._chunk_fixed(cleaned, doc_id, title, source, base_meta)
+
+        for rec in records:
+            rec.tenant_id = tenant_id
+            rec.access_roles = roles
+        return records
 
     def _chunk_parent_child(
         self,

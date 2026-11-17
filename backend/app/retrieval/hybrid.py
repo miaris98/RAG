@@ -1,22 +1,25 @@
-"""Two-Stage Hybrid Retrieval Engine:
+"""Tri-Modal Hybrid Retrieval Engine with Pre-Filtered RBAC:
+- Stage 0: Pre-Filtered Multi-Tenant & Role-Based Access Control (prevents recall starvation)
 - Stage 1A: Dense Vector Similarity Search (Milvus + Cosine ANN)
 - Stage 1B: Sparse Lexical Search (BM25Okapi over technical/alphanumeric tokens)
-- Stage 1C: Reciprocal Rank Fusion (RRF, k=60) + Parent-Child Small-to-Big Promotion
+- Stage 1C: Entity Knowledge Graph 1-Hop Traversal (GraphRAG)
+- Stage 1D: Reciprocal Rank Fusion (RRF, k=60) + Parent-Child Small-to-Big Promotion
 - Stage 2: Cross-Encoder Joint Reranking + Calibrated Relevance Gating
 """
 
 import math
 import threading
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from app.config import settings
 from app.models import ChunkRecord, RetrievalMode, RetrievedChunk
 from app.retrieval.embeddings import ModelRegistry
+from app.retrieval.entity_graph import entity_graph
 from app.retrieval.reranker import CrossEncoderReranker, tokenize_content_words
 
 
 class PurePythonBM25Okapi:
-    """Zero-dependency BM25Okapi implementation (k1=1.5, b=0.75) used if rank_bm25 is not installed."""
+    """Zero-dependency BM25Okapi implementation (k1=1.5, b=0.75)."""
 
     def __init__(self, corpus_tokens: List[List[str]], k1: float = 1.5, b: float = 0.75):
         self.corpus_tokens = corpus_tokens
@@ -70,7 +73,7 @@ def cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
 
 
 class HybridRetrievalEngine:
-    """Coordinates Milvus Dense Search, BM25 Sparse Search, RRF Fusion, and Cross-Encoder Reranking."""
+    """Coordinates Pre-Filtered RBAC, Milvus Dense Search, BM25, Entity Graph, RRF, and Cross-Encoder Reranking."""
 
     def __init__(self):
         self._lock = threading.RLock()
@@ -83,10 +86,7 @@ class HybridRetrievalEngine:
         self._milvus_hydrated: bool = False
 
     def add_chunks(self, chunks: List[ChunkRecord]) -> Tuple[int, int]:
-        """Idempotently indexes chunks into the local registry, BM25 index, and Milvus collection.
-
-        Returns (added_count, skipped_duplicate_count).
-        """
+        """Idempotently indexes chunks into the local registry, BM25, Entity Graph, and Milvus."""
         if not chunks:
             return 0, 0
 
@@ -107,6 +107,7 @@ class HybridRetrievalEngine:
             vectors = embedder.embed_documents(texts)
 
             for chk, vec in zip(new_chunks, vectors):
+                chk.entities = entity_graph.add_chunk(chk.chunk_id, chk.parent_content)
                 self._chunks_by_id[chk.chunk_id] = chk
                 self._chunk_order.append(chk.chunk_id)
                 self._dense_vectors[chk.chunk_id] = vec
@@ -116,18 +117,15 @@ class HybridRetrievalEngine:
             return len(new_chunks), skipped
 
     def _rebuild_bm25(self) -> None:
-        """Rebuilds the tokenized BM25Okapi index over all registered chunks."""
         if not self._chunk_order:
             self._bm25 = None
             return
         tokenized_corpus = [
             tokenize_content_words(self._chunks_by_id[cid].content) for cid in self._chunk_order
         ]
-        # PurePythonBM25Okapi uses smoothed log(1 + ...) IDF which avoids negative scores on small corpora
         self._bm25 = PurePythonBM25Okapi(tokenized_corpus)
 
     def _push_to_milvus(self, new_chunks: List[ChunkRecord]) -> None:
-        """Indexes new chunks into Milvus if reachable; logs gracefully if running offline."""
         try:
             from langchain_core.documents import Document as LangChainDocument
             from langchain_community.vectorstores import Milvus
@@ -142,6 +140,8 @@ class HybridRetrievalEngine:
                         "title": c.title,
                         "source": c.source,
                         "section": c.section,
+                        "tenant_id": c.tenant_id,
+                        "access_roles": ",".join(c.access_roles),
                         "parent_content": c.parent_content,
                     },
                 )
@@ -157,15 +157,13 @@ class HybridRetrievalEngine:
             self._milvus_connected = True
         except Exception as exc:
             self._milvus_connected = False
-            print(f"[HybridRetrievalEngine] Milvus sync skipped (using in-memory + BM25 index): {exc}")
+            print(f"[HybridRetrievalEngine] Milvus sync skipped (using in-memory + BM25 + Graph index): {exc}")
 
     def _hydrate_from_milvus_if_empty(self) -> None:
-        """Hydrates the in-memory BM25 & chunk store from Milvus after container restart."""
         if self._milvus_hydrated or self._chunk_order:
             return
         self._milvus_hydrated = True
         try:
-            from langchain_core.documents import Document as LangChainDocument
             from langchain_community.vectorstores import Milvus
 
             embedder = ModelRegistry.get_embeddings()
@@ -182,6 +180,8 @@ class HybridRetrievalEngine:
             for idx, doc in enumerate(docs):
                 meta = doc.metadata or {}
                 cid = meta.get("chunk_id") or f"chk_milvus_{idx}"
+                raw_roles = meta.get("access_roles", "public")
+                roles = [r.strip() for r in raw_roles.split(",") if r.strip()] if isinstance(raw_roles, str) else list(raw_roles)
                 hydrated.append(
                     ChunkRecord(
                         chunk_id=cid,
@@ -190,6 +190,8 @@ class HybridRetrievalEngine:
                         title=meta.get("title", "Milvus Persisted Document"),
                         source=meta.get("source", "milvus_volume"),
                         section=meta.get("section", "Persisted"),
+                        tenant_id=meta.get("tenant_id", "default"),
+                        access_roles=roles or ["public"],
                         content=doc.page_content,
                         parent_content=meta.get("parent_content", doc.page_content),
                         chunk_index=idx,
@@ -202,6 +204,7 @@ class HybridRetrievalEngine:
                     vecs = embedder.embed_documents(texts)
                     for chk, vec in zip(hydrated, vecs):
                         if chk.chunk_id not in self._chunks_by_id:
+                            chk.entities = entity_graph.add_chunk(chk.chunk_id, chk.parent_content)
                             self._chunks_by_id[chk.chunk_id] = chk
                             self._chunk_order.append(chk.chunk_id)
                             self._dense_vectors[chk.chunk_id] = vec
@@ -210,18 +213,44 @@ class HybridRetrievalEngine:
         except Exception:
             pass
 
+    def _authorized_chunk_ids(self, tenant_id: str, user_roles: Optional[List[str]]) -> Set[str]:
+        """Stage 0 Pre-Filter: Computes the exact set of chunk_ids authorized for (tenant_id, user_roles)."""
+        if user_roles is None:
+            caller_roles = {"public", "engineering", "compliance"}
+        else:
+            caller_roles = {r.strip().lower() for r in user_roles if r and r.strip()}
+
+        authorized: Set[str] = set()
+        for cid in self._chunk_order:
+            chk = self._chunks_by_id[cid]
+            if chk.tenant_id != tenant_id:
+                continue
+            chunk_roles = {r.strip().lower() for r in chk.access_roles}
+            if chunk_roles & caller_roles:
+                authorized.add(cid)
+        return authorized
+
     def retrieve(
         self,
         queries: List[str],
-        mode: RetrievalMode = "hybrid_rerank",
+        mode: RetrievalMode = "hybrid_graph_rerank",
         top_k: int = settings.rerank_top_k,
         promote_parents: bool = True,
+        tenant_id: str = "default",
+        user_roles: Optional[List[str]] = None,
+        dense_weight: float = settings.dense_weight,
+        sparse_weight: float = settings.sparse_weight,
+        graph_weight: float = 0.85,
     ) -> List[RetrievedChunk]:
-        """Executes single-query or multi-query retrieval across the selected pipeline mode."""
+        """Executes pre-filtered RBAC + Tri-Modal retrieval + RRF + Cross-Encoder Reranking."""
         self._hydrate_from_milvus_if_empty()
 
         with self._lock:
             if not self._chunk_order:
+                return []
+
+            authorized_ids = self._authorized_chunk_ids(tenant_id, user_roles)
+            if not authorized_ids:
                 return []
 
             clean_queries = [q.strip() for q in queries if q and q.strip()]
@@ -229,16 +258,17 @@ class HybridRetrievalEngine:
                 return []
             primary_query = clean_queries[0]
 
-            # 1. Compute Dense Rankings across all sub-queries
+            # 1. Dense Bi-Encoder Rankings (Pre-Filtered to authorized_ids)
             dense_ranks_per_chunk: Dict[str, int] = {}
             dense_scores_per_chunk: Dict[str, float] = {}
-            if mode in ("dense", "hybrid_rrf", "hybrid_rerank"):
+            if mode in ("dense", "hybrid_rrf", "hybrid_rerank", "hybrid_graph_rerank"):
                 embedder = ModelRegistry.get_embeddings()
                 for q in clean_queries:
                     q_vec = embedder.embed_query(q)
                     scored = [
                         (cid, cosine_similarity(q_vec, self._dense_vectors[cid]))
                         for cid in self._chunk_order
+                        if cid in authorized_ids
                     ]
                     scored.sort(key=lambda x: x[1], reverse=True)
                     for rank_idx, (cid, sim) in enumerate(scored[: settings.retrieval_top_k_dense], start=1):
@@ -247,17 +277,17 @@ class HybridRetrievalEngine:
                         if cid not in dense_scores_per_chunk or sim > dense_scores_per_chunk[cid]:
                             dense_scores_per_chunk[cid] = sim
 
-            # 2. Compute Sparse BM25 Rankings across all sub-queries
+            # 2. Sparse BM25 Rankings (Pre-Filtered to authorized_ids)
             sparse_ranks_per_chunk: Dict[str, int] = {}
             sparse_scores_per_chunk: Dict[str, float] = {}
-            if mode in ("sparse", "hybrid_rrf", "hybrid_rerank") and self._bm25 is not None:
+            if mode in ("sparse", "hybrid_rrf", "hybrid_rerank", "hybrid_graph_rerank") and self._bm25 is not None:
                 for q in clean_queries:
                     q_tokens = tokenize_content_words(q)
                     bm25_scores = self._bm25.get_scores(q_tokens)
                     indexed_scores = [
                         (self._chunk_order[i], float(bm25_scores[i]))
                         for i in range(len(self._chunk_order))
-                        if bm25_scores[i] > 0.0
+                        if bm25_scores[i] > 0.0 and self._chunk_order[i] in authorized_ids
                     ]
                     indexed_scores.sort(key=lambda x: x[1], reverse=True)
                     for rank_idx, (cid, b_score) in enumerate(
@@ -268,11 +298,27 @@ class HybridRetrievalEngine:
                         if cid not in sparse_scores_per_chunk or b_score > sparse_scores_per_chunk[cid]:
                             sparse_scores_per_chunk[cid] = b_score
 
-            # 3. Combine Candidates via Reciprocal Rank Fusion (RRF) or Single-Modality Score
-            candidate_ids = set(dense_ranks_per_chunk.keys()) | set(sparse_ranks_per_chunk.keys())
+            # 3. Entity Knowledge Graph 1-Hop Expansion (for Tri-Modal GraphRAG)
+            graph_ranks_per_chunk: Dict[str, int] = {}
+            graph_scores_per_chunk: Dict[str, float] = {}
+            if mode == "hybrid_graph_rerank":
+                graph_hits = entity_graph.score_chunks(
+                    queries=clean_queries,
+                    allowed_chunk_ids=authorized_ids,
+                    top_k=settings.retrieval_top_k_dense,
+                )
+                for rank_idx, (cid, g_score) in enumerate(graph_hits, start=1):
+                    graph_ranks_per_chunk[cid] = rank_idx
+                    graph_scores_per_chunk[cid] = g_score
+
+            # 4. Reciprocal Rank Fusion (RRF)
+            candidate_ids = (
+                set(dense_ranks_per_chunk.keys())
+                | set(sparse_ranks_per_chunk.keys())
+                | set(graph_ranks_per_chunk.keys())
+            )
             if not candidate_ids and mode == "sparse":
-                # Fallback if query had zero exact BM25 token matches
-                candidate_ids = set(self._chunk_order[:top_k])
+                candidate_ids = set(list(authorized_ids)[:top_k])
 
             candidates: List[RetrievedChunk] = []
             rrf_k = settings.rrf_k
@@ -282,19 +328,22 @@ class HybridRetrievalEngine:
                 d_score = dense_scores_per_chunk.get(cid)
                 s_rank = sparse_ranks_per_chunk.get(cid)
                 s_score = sparse_scores_per_chunk.get(cid)
+                g_rank = graph_ranks_per_chunk.get(cid)
+                g_score = graph_scores_per_chunk.get(cid)
 
                 rrf_val = 0.0
                 if mode == "dense" and d_rank is not None:
-                    rrf_val = settings.dense_weight / (rrf_k + d_rank)
+                    rrf_val = dense_weight / (rrf_k + d_rank)
                 elif mode == "sparse" and s_rank is not None:
-                    rrf_val = settings.sparse_weight / (rrf_k + s_rank)
+                    rrf_val = sparse_weight / (rrf_k + s_rank)
                 else:
                     if d_rank is not None:
-                        rrf_val += settings.dense_weight / (rrf_k + d_rank)
+                        rrf_val += dense_weight / (rrf_k + d_rank)
                     if s_rank is not None:
-                        rrf_val += settings.sparse_weight / (rrf_k + s_rank)
+                        rrf_val += sparse_weight / (rrf_k + s_rank)
+                    if g_rank is not None:
+                        rrf_val += graph_weight / (rrf_k + g_rank)
 
-                # Default calibrated_prob before Cross-Encoder reranking
                 initial_prob = 0.0
                 if d_score is not None and s_score is not None:
                     initial_prob = min(0.95, max(0.0, 0.5 * d_score + 0.5 * min(1.0, s_score / 8.0)))
@@ -311,26 +360,28 @@ class HybridRetrievalEngine:
                         title=record.title,
                         source=record.source,
                         section=record.section,
+                        tenant_id=record.tenant_id,
+                        access_roles=list(record.access_roles),
                         content=record.content,
                         parent_content=record.parent_content if promote_parents else record.content,
                         dense_rank=d_rank,
                         dense_score=round(d_score, 4) if d_score is not None else None,
                         sparse_rank=s_rank,
                         sparse_score=round(s_score, 4) if s_score is not None else None,
+                        graph_rank=g_rank,
+                        graph_score=round(g_score, 4) if g_score is not None else None,
                         rrf_score=round(rrf_val, 6),
                         calibrated_prob=round(initial_prob, 4),
                         is_relevant=initial_prob >= settings.relevance_threshold,
                     )
                 )
 
-            # Sort by RRF score (breaking ties by dense_score and sparse_score)
             candidates.sort(
                 key=lambda c: (c.rrf_score, c.dense_score or 0.0, c.sparse_score or 0.0),
                 reverse=True,
             )
 
-            # 4. Small-to-Big Parent Deduplication (keep highest-scoring child per parent window,
-            #    while giving a multi-hit corroboration bonus when multiple children in the same parent match)
+            # 5. Small-to-Big Parent Deduplication
             if promote_parents:
                 deduped_by_parent: Dict[str, RetrievedChunk] = {}
                 for cand in candidates:
@@ -346,15 +397,14 @@ class HybridRetrievalEngine:
                     reverse=True,
                 )
 
-            # 5. Stage 2: Cross-Encoder Reranking (if mode == 'hybrid_rerank')
-            if mode == "hybrid_rerank":
+            # 6. Stage 2: Cross-Encoder Reranking
+            if mode in ("hybrid_rerank", "hybrid_graph_rerank"):
                 pool = candidates[: max(top_k * 3, 12)]
                 return self._reranker.rerank(primary_query, pool, top_k=top_k)
 
             return candidates[:top_k]
 
     def stats(self) -> dict:
-        """Returns corpus statistics for healthchecks and UI observability."""
         with self._lock:
             unique_docs = {c.doc_id for c in self._chunks_by_id.values()}
             unique_parents = {c.parent_id for c in self._chunks_by_id.values()}
@@ -366,15 +416,16 @@ class HybridRetrievalEngine:
                 "document_titles": titles,
                 "milvus_connected": self._milvus_connected,
                 "bm25_ready": self._bm25 is not None,
+                "entity_graph": entity_graph.stats(),
             }
 
     def clear(self) -> None:
-        """Resets the in-memory corpus and BM25 index."""
         with self._lock:
             self._chunks_by_id.clear()
             self._chunk_order.clear()
             self._dense_vectors.clear()
             self._bm25 = None
+            entity_graph.clear()
 
 
 retrieval_engine = HybridRetrievalEngine()

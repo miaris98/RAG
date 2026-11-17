@@ -71,9 +71,13 @@ def enqueue_rag_job(query_input: QueryInput) -> Dict[str, Any]:
         "text": query_input.text,
         "retrieval_mode": query_input.retrieval_mode,
         "top_k": query_input.top_k,
+        "tenant_id": query_input.tenant_id,
+        "user_roles": query_input.user_roles,
         "enable_query_expansion": query_input.enable_query_expansion,
         "enable_web_search": query_input.enable_web_search,
         "enable_self_rag": query_input.enable_self_rag,
+        "enable_semantic_cache": query_input.enable_semantic_cache,
+        "enable_guardrails": query_input.enable_guardrails,
     }
 
     with _JOBS_LOCK:

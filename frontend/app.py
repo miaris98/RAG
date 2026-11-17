@@ -1,7 +1,8 @@
-"""Gradio Observability & Evaluation Studio for the Staff RAG Engineering Platform."""
+"""Gradio Observability & Evaluation Studio for the Staff+ RAG Engineering Platform."""
 
+import json
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 import gradio as gr
 import requests
 
@@ -17,13 +18,19 @@ def ingest_document_to_backend(
     title: str = "Untitled Document",
     source: str = "gradio_ui",
     chunking_strategy: str = "parent_child",
+    tenant_id: str = "default",
+    access_roles: Optional[List[str]] = None,
+    apply_guardrails: bool = True,
 ) -> Dict[str, Any]:
-    """Sends a document to POST /ingest with chunking strategy and metadata."""
+    """Sends a document to POST /ingest with RBAC metadata, guardrails, and chunking strategy."""
     payload = {
         "content": content,
         "title": title or "Untitled Document",
         "source": source or "gradio_ui",
         "chunking_strategy": chunking_strategy,
+        "tenant_id": tenant_id or "default",
+        "access_roles": access_roles or ["public"],
+        "apply_guardrails": bool(apply_guardrails),
     }
     try:
         response = requests.post(f"{BACKEND_URL}/ingest", json=payload, timeout=30)
@@ -34,7 +41,6 @@ def ingest_document_to_backend(
 
 
 def seed_sample_corpus_on_backend(strategy: str = "parent_child") -> Dict[str, Any]:
-    """Triggers POST /ingest-sample to load the built-in enterprise architecture docs."""
     try:
         response = requests.post(
             f"{BACKEND_URL}/ingest-sample",
@@ -49,20 +55,27 @@ def seed_sample_corpus_on_backend(strategy: str = "parent_child") -> Dict[str, A
 
 def submit_job_to_backend(
     query: str,
-    retrieval_mode: str = "hybrid_rerank",
+    retrieval_mode: str = "hybrid_graph_rerank",
     top_k: int = 5,
+    tenant_id: str = "default",
+    user_roles: Optional[List[str]] = None,
     enable_query_expansion: bool = True,
     enable_web_search: bool = True,
     enable_self_rag: bool = True,
+    enable_semantic_cache: bool = True,
+    enable_guardrails: bool = True,
 ) -> Dict[str, Any]:
-    """Submits an async RAG query job to the RabbitMQ queue via POST /submit-job."""
     payload = {
         "text": query,
         "retrieval_mode": retrieval_mode,
         "top_k": int(top_k),
+        "tenant_id": tenant_id or "default",
+        "user_roles": user_roles or ["public"],
         "enable_query_expansion": bool(enable_query_expansion),
         "enable_web_search": bool(enable_web_search),
         "enable_self_rag": bool(enable_self_rag),
+        "enable_semantic_cache": bool(enable_semantic_cache),
+        "enable_guardrails": bool(enable_guardrails),
     }
     try:
         response = requests.post(f"{BACKEND_URL}/submit-job", json=payload, timeout=15)
@@ -73,7 +86,6 @@ def submit_job_to_backend(
 
 
 def get_job_result(job_id: str) -> Dict[str, Any]:
-    """Polls GET /get-job/{job_id} for job status, answer, and pipeline trace."""
     try:
         response = requests.get(f"{BACKEND_URL}/get-job/{job_id}", timeout=15)
         if response.status_code == 404:
@@ -84,10 +96,9 @@ def get_job_result(job_id: str) -> Dict[str, Any]:
 
 
 def run_evaluation_on_backend(top_k: int = 3) -> Dict[str, Any]:
-    """Calls POST /evaluate to run the Golden QA Ablation Study."""
     payload = {
         "top_k": int(top_k),
-        "modes": ["dense", "sparse", "hybrid_rrf", "hybrid_rerank"],
+        "modes": ["dense", "sparse", "hybrid_rrf", "hybrid_rerank", "hybrid_graph_rerank"],
         "seed_golden_corpus": True,
     }
     try:
@@ -102,41 +113,42 @@ def run_evaluation_on_backend(top_k: int = 3) -> Dict[str, Any]:
 
 
 def format_pipeline_trace_markdown(trace: Optional[Dict[str, Any]], tools: list) -> str:
-    """Renders the PipelineTrace telemetry and retrieved chunk score table as Markdown."""
     if not trace:
         return "_No trace telemetry available yet._"
 
     latencies = trace.get("stage_latencies_ms") or {}
     latency_badges = " · ".join(f"`{k}: {v} ms`" for k, v in latencies.items())
+    guard_flags = trace.get("guardrail_flags") or []
 
     lines = [
-        "### 🔬 Pipeline Observability & Retrieval Telemetry",
-        f"- **Retrieval Mode:** `{trace.get('retrieval_mode')}` | "
-        f"**CRAG Gate Decision:** `{trace.get('crag_decision')}` | "
-        f"**Self-RAG Verdict:** `{trace.get('self_rag_verdict')}`",
-        f"- **Faithfulness Score:** `{trace.get('faithfulness_score', 0.0):.3f}` | "
-        f"**Inline Citations:** `{trace.get('citation_count', 0)}` | "
-        f"**Total Latency:** `{trace.get('total_latency_ms', 0.0):.2f} ms`",
-        f"- **Tools / Nodes Executed:** `{', '.join(tools) if tools else 'None'}`",
+        "### 🔬 Pipeline Observability & Staff+ Telemetry",
+        f"- **Query Route:** `{trace.get('query_route')}` | **Retrieval Mode:** `{trace.get('retrieval_mode')}` | "
+        f"**Semantic Cache Hit:** `{trace.get('cache_hit')}`",
+        f"- **RBAC Scope:** `tenant={trace.get('tenant_id')}`, `roles={trace.get('user_roles')}` | "
+        f"**Guardrail Flags:** `{guard_flags or ['clean']}`",
+        f"- **CRAG Gate:** `{trace.get('crag_decision')}` | **Self-RAG Verdict:** `{trace.get('self_rag_verdict')}` | "
+        f"**Faithfulness:** `{trace.get('faithfulness_score', 0.0):.3f}` | **Citations:** `{trace.get('citation_count', 0)}`",
+        f"- **Total Latency:** `{trace.get('total_latency_ms', 0.0):.2f} ms` | **Tools:** `{', '.join(tools) if tools else 'None'}`",
         f"- **Expanded Sub-Queries:** `{trace.get('expanded_queries', [])}`",
         f"- **Stage Latency Breakdown:** {latency_badges or 'N/A'}",
         "",
-        "#### 📄 Two-Stage Hybrid Retrieval & Cross-Encoder Reranking Table",
-        "| Rank | Chunk ID | Document Title | Dense Rank (Cosine) | BM25 Rank (Score) | RRF Score | Cross-Encoder Prob | CRAG Gate |",
-        "| :---: | :--- | :--- | :---: | :---: | :---: | :---: | :---: |",
+        "#### 📄 Tri-Modal Hybrid Retrieval (Dense + BM25 + Entity Graph) & Cross-Encoder Table",
+        "| Rank | Chunk ID | Title | Dense | BM25 | Graph | RRF Score | Cross-Encoder Prob | CRAG |",
+        "| :---: | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |",
     ]
 
     chunks = trace.get("retrieved_chunks") or []
     if not chunks:
-        lines.append("| - | None | _No chunks in corpus_ | - | - | - | - | - |")
+        lines.append("| - | None | _No authorized chunks matched_ | - | - | - | - | - | - |")
     else:
         for idx, chk in enumerate(chunks, start=1):
             d_str = f"#{chk['dense_rank']} ({chk['dense_score']})" if chk.get("dense_rank") else "—"
             s_str = f"#{chk['sparse_rank']} ({chk['sparse_score']})" if chk.get("sparse_rank") else "—"
+            g_str = f"#{chk['graph_rank']} ({chk['graph_score']})" if chk.get("graph_rank") else "—"
             gate_badge = "✅ PASS" if chk.get("is_relevant") else "❌ PRUNED"
             lines.append(
                 f"| {idx} | `{chk.get('chunk_id', '')[:12]}` | {chk.get('title', '')} | "
-                f"{d_str} | {s_str} | `{chk.get('rrf_score', 0.0):.5f}` | "
+                f"{d_str} | {s_str} | {g_str} | `{chk.get('rrf_score', 0.0):.5f}` | "
                 f"**`{chk.get('calibrated_prob', 0.0):.3f}`** | {gate_badge} |"
             )
 
@@ -148,25 +160,35 @@ def format_pipeline_trace_markdown(trace: Optional[Dict[str, Any]], tools: list)
 
 def ingest_document(
     content: str,
-    title: str = "Untitled Document",
-    source: str = "gradio_ui",
-    strategy: str = "parent_child",
+    title: str,
+    source: str,
+    strategy: str,
+    tenant_id: str,
+    roles_selected: List[str],
+    apply_guardrails: bool,
 ) -> str:
     if not content or not content.strip():
         return "⚠️ Please enter document content or click 'Seed Enterprise Sample Corpus'."
-    response = ingest_document_to_backend(content, title=title, source=source, chunking_strategy=strategy)
+    response = ingest_document_to_backend(
+        content=content,
+        title=title,
+        source=source,
+        chunking_strategy=strategy,
+        tenant_id=tenant_id,
+        access_roles=roles_selected or ["public"],
+        apply_guardrails=apply_guardrails,
+    )
     if response.get("status") == "error":
         return f"❌ Failed: {response['message']}"
 
     return (
         f"✅ **Ingested:** `{response.get('title')}` (`{response.get('doc_id')}`)\n"
-        f"- **Strategy:** `{response.get('chunking_strategy')}`\n"
+        f"- **RBAC Scope:** `tenant={response.get('tenant_id')}`, `roles={response.get('access_roles')}`\n"
+        f"- **Guardrail Flags:** `{response.get('guardrail_flags') or ['clean']}` | "
+        f"**Cache Entries Invalidated:** `{response.get('invalidated_cache_entries', 0)}`\n"
         f"- **Child Chunks Indexed (New):** `{response.get('chunks_indexed_new')}` "
         f"(Duplicates Skipped via SHA-256: `{response.get('chunks_skipped_duplicate')}`)\n"
-        f"- **Parent Context Windows:** `{response.get('parent_windows_count')}`\n"
-        f"- **Ingestion Latency:** `{response.get('ingestion_latency_ms')} ms`\n"
-        f"- **Total Corpus Size:** `{response.get('corpus_stats', {}).get('total_chunks', 0)} chunks` across "
-        f"`{response.get('corpus_stats', {}).get('total_documents', 0)} documents`"
+        f"- **Latency:** `{response.get('ingestion_latency_ms')} ms`"
     )
 
 
@@ -186,11 +208,15 @@ def handle_seed_sample_corpus(strategy: str = "parent_child") -> str:
 
 def submit_query(
     query: str,
-    retrieval_mode: str = "hybrid_rerank",
-    top_k: int = 5,
-    enable_expansion: bool = True,
-    enable_web: bool = True,
-    enable_self_rag: bool = True,
+    retrieval_mode: str,
+    top_k: int,
+    tenant_id: str,
+    user_roles: List[str],
+    enable_expansion: bool,
+    enable_web: bool,
+    enable_self_rag: bool,
+    enable_cache: bool,
+    enable_guardrails: bool,
 ) -> Tuple[str, Optional[str]]:
     if not query or not query.strip():
         return "⚠️ Please enter a query.", None
@@ -199,16 +225,20 @@ def submit_query(
         query=query,
         retrieval_mode=retrieval_mode,
         top_k=top_k,
+        tenant_id=tenant_id,
+        user_roles=user_roles or ["public"],
         enable_query_expansion=enable_expansion,
         enable_web_search=enable_web,
         enable_self_rag=enable_self_rag,
+        enable_semantic_cache=enable_cache,
+        enable_guardrails=enable_guardrails,
     )
     if "error" in response:
         return f"❌ Error: {response['error']}", None
 
     job_id = response.get("job_id")
     broker = response.get("broker", "rabbitmq")
-    return f"✅ Job Submitted! ID: `{job_id}` (Broker: `{broker}`)\nClick **Check Job Result** to inspect output.", job_id
+    return f"✅ Job Submitted! ID: `{job_id}` (Broker: `{broker}`)\nClick **Check Job Result**.", job_id
 
 
 def check_status(job_id: Optional[str]) -> Tuple[str, str]:
@@ -224,15 +254,62 @@ def check_status(job_id: Optional[str]) -> Tuple[str, str]:
     if status == "queued":
         return f"⏳ Job `{job_id}` is **QUEUED**.", "_Waiting for worker..._"
     elif status == "processing":
-        return f"⚙️ Job `{job_id}` is **PROCESSING** through the LangGraph CRAG + Self-RAG pipeline...", "_Executing nodes..._"
+        return f"⚙️ Job `{job_id}` is **PROCESSING**...", "_Executing LangGraph nodes..._"
     elif status == "completed":
-        tool_Summary = f"\n\n🛠️ **Pipeline Tools Used:** `{', '.join(tools)}`" if tools else ""
         trace_md = format_pipeline_trace_markdown(trace, tools)
-        return f"✅ **Grounded Response:**\n\n{result}{tool_Summary}", trace_md
+        return f"✅ **Grounded Response:**\n\n{result}", trace_md
     elif status == "failed":
         return f"❌ **Job Failed:** {result}", "_Pipeline execution failed._"
     else:
         return "Unknown job status.", "_No trace available._"
+
+
+def stream_query_live(
+    query: str,
+    retrieval_mode: str,
+    top_k: int,
+    tenant_id: str,
+    user_roles: List[str],
+    enable_expansion: bool,
+    enable_web: bool,
+    enable_self_rag: bool,
+    enable_cache: bool,
+    enable_guardrails: bool,
+) -> Iterator[Tuple[str, str]]:
+    """Consumes POST /query-stream SSE events and yields live updates to Gradio."""
+    if not query or not query.strip():
+        yield "⚠️ Please enter a query.", "_Waiting for query..._"
+        return
+
+    payload = {
+        "text": query,
+        "retrieval_mode": retrieval_mode,
+        "top_k": int(top_k),
+        "tenant_id": tenant_id or "default",
+        "user_roles": user_roles or ["public"],
+        "enable_query_expansion": bool(enable_expansion),
+        "enable_web_search": bool(enable_web),
+        "enable_self_rag": bool(enable_self_rag),
+        "enable_semantic_cache": bool(enable_cache),
+        "enable_guardrails": bool(enable_guardrails),
+    }
+
+    progress_lines: List[str] = ["⚡ **Live LangGraph SSE Stream Started:**"]
+    try:
+        with requests.post(f"{BACKEND_URL}/query-stream", json=payload, stream=True, timeout=60) as resp:
+            resp.raise_for_status()
+            for raw_line in resp.iter_lines(decode_unicode=True):
+                if not raw_line or not raw_line.startswith("data: "):
+                    continue
+                evt = json.loads(raw_line[len("data: ") :])
+                if evt.get("event") == "stage":
+                    progress_lines.append(f"- Node `{evt.get('node')}` → `{evt.get('status')}`")
+                    yield "\n".join(progress_lines), "_Streaming LangGraph execution..._"
+                elif evt.get("event") == "final":
+                    trace_md = format_pipeline_trace_markdown(evt.get("trace"), evt.get("tools", []))
+                    yield f"✅ **Grounded Response (SSE Streamed):**\n\n{evt.get('answer', '')}", trace_md
+    except Exception as exc:
+        yield f"❌ SSE Stream Error: {exc}", "_Stream interrupted._"
 
 
 def handle_run_evaluation(top_k: int = 3) -> str:
@@ -244,16 +321,16 @@ def handle_run_evaluation(top_k: int = 3) -> str:
 
 # --- Gradio 3-Tab Studio Layout ---
 
-with gr.Blocks(title="Staff RAG Engineering Studio") as demo:
+with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
     gr.Markdown(
-        "# 🏗️ Staff RAG Engineering & Observability Studio\n"
-        "**Two-Stage Hybrid Retrieval (`Milvus Dense` + `BM25` via `RRF k=60` $\\rightarrow$ `Cross-Encoder Reranker`) · "
-        "LangGraph Corrective RAG (`CRAG`) & `Self-RAG` · Asynchronous `RabbitMQ` Workers**"
+        "# 🏗️ Staff+ RAG Engineering & Observability Studio\n"
+        "**Pre-Filtered RBAC · Tri-Modal GraphRAG (`Milvus Dense` + `BM25` + `Entity Graph` via `RRF k=60` $\\rightarrow$ `Cross-Encoder`) · "
+        "Adaptive Query Router · Semantic Cache · Guardrails · LangGraph `CRAG`/`Self-RAG` · SSE Streaming**"
     )
 
     with gr.Tabs():
-        # TAB 1: Ingestion & Chunking
-        with gr.TabItem("1. Ingestion & Parent-Child Chunking"):
+        # TAB 1: Ingestion, RBAC & Guardrails
+        with gr.TabItem("1. Ingestion, RBAC & Guardrails"):
             with gr.Row():
                 with gr.Column(scale=2):
                     doc_title = gr.Textbox(
@@ -264,15 +341,26 @@ with gr.Blocks(title="Staff RAG Engineering Studio") as demo:
                         label="Source Identifier / URI",
                         value="internal://architecture/rfc-402.md",
                     )
-                    chunk_strategy = gr.Dropdown(
-                        choices=["parent_child", "contextual_recursive", "fixed"],
-                        value="parent_child",
-                        label="Chunking Strategy (Small-to-Big Parent-Child vs. Contextual vs. Fixed Baseline)",
+                    with gr.Row():
+                        chunk_strategy = gr.Dropdown(
+                            choices=["parent_child", "contextual_recursive", "fixed"],
+                            value="parent_child",
+                            label="Chunking Strategy",
+                        )
+                        ingest_tenant = gr.Textbox(label="Tenant ID", value="default")
+                        ingest_roles = gr.CheckboxGroup(
+                            choices=["public", "engineering", "compliance"],
+                            value=["public", "engineering"],
+                            label="Authorized RBAC Roles",
+                        )
+                    ingest_guardrails = gr.Checkbox(
+                        value=True,
+                        label="Enable Security Guardrails (PII Redaction & Prompt Injection Defense)",
                     )
                     doc_input = gr.Textbox(
-                        lines=8,
-                        label="Document Content (Markdown / Technical Text)",
-                        placeholder="Paste document text here or click 'Seed Enterprise Sample Corpus' on the right...",
+                        lines=7,
+                        label="Document Content",
+                        placeholder="Paste document text here or click 'Seed Enterprise Sample Corpus'...",
                     )
                     with gr.Row():
                         ingest_btn = gr.Button("📥 Ingest Document", variant="primary")
@@ -280,11 +368,11 @@ with gr.Blocks(title="Staff RAG Engineering Studio") as demo:
 
                 with gr.Column(scale=1):
                     ingest_out = gr.Markdown(
-                        label="Ingestion & SHA-256 Deduplication Telemetry",
+                        label="Ingestion, RBAC & Guardrails Telemetry",
                         value="_Ready to ingest documents._",
                     )
 
-        # TAB 2: Async Query & Trace Observability
+        # TAB 2: Async / SSE Streaming Query Studio
         with gr.TabItem("2. Corrective & Self-RAG Query Studio"):
             with gr.Row():
                 with gr.Column(scale=1):
@@ -294,33 +382,37 @@ with gr.Blocks(title="Staff RAG Engineering Studio") as demo:
                         value="What triggers ERR_LEDGER_9042 and what is the remediation command?",
                     )
                     retrieval_mode = gr.Dropdown(
-                        choices=["hybrid_rerank", "hybrid_rrf", "dense", "sparse"],
-                        value="hybrid_rerank",
+                        choices=["hybrid_graph_rerank", "hybrid_rerank", "hybrid_rrf", "dense", "sparse"],
+                        value="hybrid_graph_rerank",
                         label="Retrieval Pipeline Mode",
                     )
-                    top_k_slider = gr.Slider(
-                        minimum=1,
-                        maximum=10,
-                        value=3,
-                        step=1,
-                        label="Top-K Chunks Passed to Synthesizer",
+                    top_k_slider = gr.Slider(minimum=1, maximum=10, value=3, step=1, label="Top-K Chunks")
+                    query_tenant = gr.Textbox(label="Caller Tenant ID", value="default")
+                    query_roles = gr.CheckboxGroup(
+                        choices=["public", "engineering", "compliance"],
+                        value=["public", "engineering", "compliance"],
+                        label="Caller RBAC Roles (Pre-Filtered)",
                     )
-                    enable_expansion_chk = gr.Checkbox(value=True, label="Enable Multi-Query Expansion")
-                    enable_web_chk = gr.Checkbox(value=True, label="Enable External Web Search (DuckDuckGo)")
-                    enable_self_rag_chk = gr.Checkbox(value=True, label="Enable Self-RAG Faithfulness Grader")
+                    enable_expansion_chk = gr.Checkbox(value=True, label="Adaptive Query Router (Lexical / HyDE / Multi-Hop)")
+                    enable_web_chk = gr.Checkbox(value=True, label="External Web Search (DuckDuckGo)")
+                    enable_self_rag_chk = gr.Checkbox(value=True, label="Self-RAG Faithfulness Grader")
+                    enable_cache_chk = gr.Checkbox(value=True, label="Role-Scoped Semantic Query Cache")
+                    enable_guardrails_chk = gr.Checkbox(value=True, label="PII & Injection Guardrails")
 
-                    submit_btn = gr.Button("📤 Submit Job to RabbitMQ Queue", variant="primary")
+                    with gr.Row():
+                        stream_btn = gr.Button("⚡ Stream Live (SSE)", variant="primary")
+                        submit_btn = gr.Button("📤 Queue via RabbitMQ")
                     job_id_state = gr.State()
                     submission_out = gr.Markdown(value="_No active job submitted._")
-                    check_btn = gr.Button("🔄 Check Job Result & Trace")
+                    check_btn = gr.Button("🔄 Check RabbitMQ Job Result")
 
                 with gr.Column(scale=2):
                     final_output = gr.Markdown(
                         label="Grounded & Cited Response",
-                        value="_Submit a query and click 'Check Job Result' to view the cited response._",
+                        value="_Stream or submit a query to view the cited response._",
                     )
                     trace_output = gr.Markdown(
-                        label="Pipeline Trace & Retrieval Score Breakdown",
+                        label="Pipeline Trace & Tri-Modal Score Breakdown",
                         value="_Retrieval telemetry will appear here._",
                     )
 
@@ -328,48 +420,40 @@ with gr.Blocks(title="Staff RAG Engineering Studio") as demo:
         with gr.TabItem("3. RAG Evaluation & Ablation Benchmark"):
             gr.Markdown(
                 "### 📈 Quantitative IR & RAG Ablation Suite\n"
-                "Benchmarks **Dense (`all-MiniLM-L6-v2`)**, **Sparse (`BM25Okapi`)**, **Hybrid RRF (`k=60`)**, "
-                "and **Hybrid + Cross-Encoder Reranker (`ms-marco-MiniLM-L-6-v2`)** across the built-in "
-                "Golden Technical QA Dataset (`HitRate@K`, `MRR@K`, `NDCG@K`, `ContextPrecision@K`, `Latency ms`)."
+                "Benchmarks **Dense**, **Sparse (BM25)**, **Hybrid RRF**, **Hybrid + Cross-Encoder**, "
+                "and **Tri-Modal GraphRAG (Dense + BM25 + Entity Graph + Cross-Encoder)** across the Golden QA Dataset."
             )
             with gr.Row():
                 eval_top_k = gr.Slider(minimum=1, maximum=10, value=3, step=1, label="Evaluation Cut-off (Top-K)")
-                eval_btn = gr.Button("🧪 Run Full Retrieval Ablation Study", variant="primary")
-            eval_output = gr.Markdown(value="_Click 'Run Full Retrieval Ablation Study' to compute metrics._")
+                eval_btn = gr.Button("🧪 Run Full 5-Mode Retrieval Ablation Study", variant="primary")
+            eval_output = gr.Markdown(value="_Click 'Run Full 5-Mode Retrieval Ablation Study' to compute metrics._")
 
     # Event Wiring
     ingest_btn.click(
         ingest_document,
-        inputs=[doc_input, doc_title, doc_source, chunk_strategy],
+        inputs=[doc_input, doc_title, doc_source, chunk_strategy, ingest_tenant, ingest_roles, ingest_guardrails],
         outputs=ingest_out,
     )
-    seed_btn.click(
-        handle_seed_sample_corpus,
-        inputs=[chunk_strategy],
-        outputs=ingest_out,
+    seed_btn.click(handle_seed_sample_corpus, inputs=[chunk_strategy], outputs=ingest_out)
+
+    stream_btn.click(
+        stream_query_live,
+        inputs=[
+            q_input, retrieval_mode, top_k_slider, query_tenant, query_roles,
+            enable_expansion_chk, enable_web_chk, enable_self_rag_chk, enable_cache_chk, enable_guardrails_chk,
+        ],
+        outputs=[final_output, trace_output],
     )
     submit_btn.click(
         submit_query,
         inputs=[
-            q_input,
-            retrieval_mode,
-            top_k_slider,
-            enable_expansion_chk,
-            enable_web_chk,
-            enable_self_rag_chk,
+            q_input, retrieval_mode, top_k_slider, query_tenant, query_roles,
+            enable_expansion_chk, enable_web_chk, enable_self_rag_chk, enable_cache_chk, enable_guardrails_chk,
         ],
         outputs=[submission_out, job_id_state],
     )
-    check_btn.click(
-        check_status,
-        inputs=job_id_state,
-        outputs=[final_output, trace_output],
-    )
-    eval_btn.click(
-        handle_run_evaluation,
-        inputs=[eval_top_k],
-        outputs=eval_output,
-    )
+    check_btn.click(check_status, inputs=job_id_state, outputs=[final_output, trace_output])
+    eval_btn.click(handle_run_evaluation, inputs=[eval_top_k], outputs=eval_output)
 
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860)

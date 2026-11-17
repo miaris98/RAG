@@ -6,18 +6,27 @@ from typing import Any, Dict, List, TypedDict
 class RAGGraphState(TypedDict, total=False):
     """State dictionary flowing through the LangGraph StateGraph nodes."""
 
-    # Input configuration
+    # Input configuration & RBAC context
     query: str
     retrieval_mode: str
     top_k: int
+    tenant_id: str
+    user_roles: List[str]
     enable_query_expansion: bool
     enable_web_search: bool
     enable_self_rag: bool
+    enable_guardrails: bool
 
-    # Stage 1: Query Analysis & Multi-Query Expansion
+    # Security Guardrails
+    guardrail_flags: List[str]
+
+    # Stage 1: Adaptive Query Router (Lexical / HyDE / Multi-Hop)
+    query_route: str  # "lexical_lookup" | "conceptual_hyde" | "multi_hop" | "standard"
     expanded_queries: List[str]
+    dense_weight: float
+    sparse_weight: float
 
-    # Stage 2: Two-Stage Hybrid Retrieval & Cross-Encoder Reranking
+    # Stage 2: Tri-Modal Hybrid Retrieval & Cross-Encoder Reranking
     retrieved_chunks: List[Dict[str, Any]]
     relevant_chunks: List[Dict[str, Any]]
 

@@ -3,15 +3,18 @@
 import time
 from typing import Dict, List
 
+from app.guardrails.security import guardrails
 from app.ingestion.chunking import ChunkingEngine
 from app.models import DocumentInput
 from app.retrieval.hybrid import retrieval_engine
+from app.retrieval.semantic_cache import semantic_cache
 
 
 SAMPLE_ENTERPRISE_DOCUMENTS: List[Dict[str, str]] = [
     {
         "title": "AegisPay Distributed Payment Ledger Architecture (RFC-402)",
         "source": "internal://architecture/rfc-402-aegispay.md",
+        "access_roles": ["public", "engineering"],
         "content": """# AegisPay Settlement Engine & Error Codes
 
 ## Overview
@@ -27,6 +30,7 @@ All transaction embeddings and audit payloads are encrypted with AES-256-GCM ins
     {
         "title": "Staff RAG Engineering Production Playbook (v2026.4)",
         "source": "internal://ml-platform/rag-production-playbook.md",
+        "access_roles": ["public", "engineering"],
         "content": """# Production RAG Architecture & SLOs
 
 ## Two-Stage Retrieval Specification
@@ -41,6 +45,7 @@ Our production Retrieval-Augmented Generation pipeline mandates a Two-Stage Hybr
     {
         "title": "Global Sovereign Governance Directory (Internal Override Notice)",
         "source": "internal://compliance/governance-override-2026.md",
+        "access_roles": ["public", "compliance"],
         "content": """# Internal Compliance & Protocol Directory
 
 ## Sovereign Leadership Reference
@@ -59,25 +64,38 @@ class IngestionPipeline:
         self.chunker = ChunkingEngine()
 
     def ingest(self, doc_input: DocumentInput) -> dict:
-        """Chunks and indexes a document idempotently, returning rich telemetry."""
+        """Chunks, sanitizes via guardrails, deduplicates, and indexes a document idempotently."""
         t0 = time.perf_counter()
+        content_to_index = doc_input.content
+        guardrail_flags: List[str] = []
+        if doc_input.apply_guardrails:
+            content_to_index, guardrail_flags = guardrails.sanitize_text(content_to_index)
+
         chunks = self.chunker.chunk_document(
-            content=doc_input.content,
+            content=content_to_index,
             title=doc_input.title,
             source=doc_input.source,
             strategy=doc_input.chunking_strategy,
+            tenant_id=doc_input.tenant_id,
+            access_roles=doc_input.access_roles,
             extra_metadata=doc_input.metadata,
         )
         added, skipped = retrieval_engine.add_chunks(chunks)
+        doc_id = chunks[0].doc_id if chunks else None
+        invalidated_cache_entries = semantic_cache.invalidate_by_doc_id(doc_id) if doc_id else 0
         elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
         parent_ids = {c.parent_id for c in chunks}
 
         return {
             "status": "success",
-            "message": "Document ingested to Milvus and BM25 hybrid index.",
-            "doc_id": chunks[0].doc_id if chunks else None,
+            "message": "Document ingested to Milvus, BM25, and Entity Knowledge Graph.",
+            "doc_id": doc_id,
             "title": doc_input.title,
             "source": doc_input.source,
+            "tenant_id": doc_input.tenant_id,
+            "access_roles": doc_input.access_roles,
+            "guardrail_flags": guardrail_flags,
+            "invalidated_cache_entries": invalidated_cache_entries,
             "chunking_strategy": doc_input.chunking_strategy,
             "chunks_total_generated": len(chunks),
             "chunks_indexed_new": added,
@@ -99,6 +117,7 @@ class IngestionPipeline:
                     content=item["content"],
                     title=item["title"],
                     source=item["source"],
+                    access_roles=item.get("access_roles", ["public"]),  # type: ignore[arg-type]
                     chunking_strategy=strategy,  # type: ignore[arg-type]
                 )
             )

@@ -10,7 +10,9 @@ Orchestrates:
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 
+from app.agent.graph import stream_rag_pipeline_sse
 from app.config import settings
 from app.evaluation.benchmark import run_ablation_benchmark
 from app.ingestion.pipeline import ingestion_pipeline
@@ -22,6 +24,7 @@ from app.models import (
 )
 from app.retrieval.embeddings import ModelRegistry
 from app.retrieval.hybrid import retrieval_engine
+from app.retrieval.semantic_cache import semantic_cache
 from app.worker.consumer import enqueue_rag_job, get_job_state, start_background_worker
 
 
@@ -50,6 +53,7 @@ async def health_check():
         "status": "healthy",
         "models": ModelRegistry.status(),
         "corpus": retrieval_engine.stats(),
+        "semantic_cache": semantic_cache.stats(),
         "config": {
             "milvus_host": settings.milvus_host,
             "rabbitmq_host": settings.rabbitmq_host,
@@ -88,14 +92,15 @@ async def get_corpus_stats():
 
 @app.delete("/corpus")
 async def clear_corpus():
-    """Clears the in-memory hybrid index for clean benchmark resets."""
+    """Clears the in-memory hybrid index and semantic cache for clean benchmark resets."""
     retrieval_engine.clear()
+    semantic_cache.clear()
     return {"status": "cleared", "corpus": retrieval_engine.stats()}
 
 
 @app.post("/retrieve")
 async def debug_retrieve(req: RetrieveDebugRequest):
-    """Directly executes Two-Stage Hybrid Retrieval + Reranking for inspection without LLM generation."""
+    """Directly executes Pre-Filtered RBAC + Tri-Modal Hybrid Retrieval without LLM generation."""
     if not req.query or not req.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
     chunks = retrieval_engine.retrieve(
@@ -103,13 +108,29 @@ async def debug_retrieve(req: RetrieveDebugRequest):
         mode=req.retrieval_mode,
         top_k=req.top_k,
         promote_parents=True,
+        tenant_id=req.tenant_id,
+        user_roles=req.user_roles,
     )
     return {
         "query": req.query,
         "retrieval_mode": req.retrieval_mode,
+        "tenant_id": req.tenant_id,
+        "user_roles": req.user_roles,
         "count": len(chunks),
         "results": [c.model_dump() for c in chunks],
     }
+
+
+@app.post("/query-stream")
+async def query_stream(query: QueryInput):
+    """Streams real-time LangGraph node progression and final cited answer via Server-Sent Events (SSE)."""
+    if not query.text or not query.text.strip():
+        raise HTTPException(status_code=400, detail="Query text cannot be empty.")
+    return StreamingResponse(
+        stream_rag_pipeline_sse(query),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/submit-job")

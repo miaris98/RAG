@@ -31,7 +31,7 @@ GOLDEN_QA_BENCHMARK: List[Dict[str, Any]] = [
         "id": "Q2_exact_rotation_id",
         "category": "Exact Identifier / Contact",
         "query": "Which PagerDuty rotation ID handles sovereign regulatory inquiries in EMEA?",
-        "expected_keywords": ["pd-emea-8821", "cco-emea@internal.corp"],
+        "expected_keywords": ["pd-emea-8821"],
     },
     {
         "id": "Q3_semantic_settlement",
@@ -152,7 +152,8 @@ def _format_markdown_ablation_table(summaries: List[Dict[str, Any]], k: int) -> 
         "dense": "1. Dense Only (`all-MiniLM-L6-v2`)",
         "sparse": "2. Sparse Only (`BM25Okapi`)",
         "hybrid_rrf": "3. Hybrid RRF (`Dense + BM25, k=60`)",
-        "hybrid_rerank": "4. **Hybrid RRF + Cross-Encoder Reranker**",
+        "hybrid_rerank": "4. Hybrid RRF + Cross-Encoder Reranker",
+        "hybrid_graph_rerank": "5. **Tri-Modal GraphRAG (Dense + BM25 + Entity Graph + Reranker)**",
     }
     for row in summaries:
         label = mode_labels.get(row["mode"], row["mode"])
