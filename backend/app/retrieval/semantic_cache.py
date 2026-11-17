@@ -68,6 +68,26 @@ class SemanticQueryCache:
     ) -> Optional[Dict[str, Any]]:
         """Finds a semantically matching cached response within the exact same RBAC & mode scope."""
         scope = self._make_scope(tenant_id, user_roles, retrieval_mode, enable_web_search)
+        norm_query = query.strip().lower()
+
+        # Fast path: exact normalized string match avoids running a Bi-Encoder forward pass
+        with self._lock:
+            scoped_entries = [e for e in self._entries if e.cache_key_scope == scope]
+            for entry in scoped_entries:
+                if entry.query_text.strip().lower() == norm_query:
+                    self._hits += 1
+                    return {
+                        "answer": entry.response_payload["answer"],
+                        "tools": list(entry.response_payload.get("tools", [])),
+                        "trace": dict(entry.response_payload.get("trace", {})),
+                        "cache_similarity": 1.0,
+                    }
+
+        if not scoped_entries:
+            with self._lock:
+                self._misses += 1
+            return None
+
         embedder = ModelRegistry.get_embeddings()
         q_vec = embedder.embed_query(query)
 
@@ -78,10 +98,6 @@ class SemanticQueryCache:
             for entry in self._entries:
                 if entry.cache_key_scope != scope:
                     continue
-                if entry.query_text.strip().lower() == query.strip().lower():
-                    best_entry = entry
-                    best_sim = 1.0
-                    break
                 sim = _cosine(q_vec, entry.query_vector)
                 if sim >= self.similarity_threshold and sim > best_sim:
                     best_sim = sim
@@ -89,7 +105,6 @@ class SemanticQueryCache:
 
             if best_entry is not None:
                 self._hits += 1
-                # Return a shallow copy so caller can stamp cache_hit=True and fresh latency
                 return {
                     "answer": best_entry.response_payload["answer"],
                     "tools": list(best_entry.response_payload.get("tools", [])),

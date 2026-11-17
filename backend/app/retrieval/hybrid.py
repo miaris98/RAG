@@ -8,6 +8,7 @@
 """
 
 import math
+import socket
 import threading
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -126,7 +127,18 @@ class HybridRetrievalEngine:
         ]
         self._bm25 = PurePythonBM25Okapi(tokenized_corpus)
 
+    @staticmethod
+    def _is_milvus_reachable(timeout_sec: float = 0.25) -> bool:
+        try:
+            with socket.create_connection((settings.milvus_host, int(settings.milvus_port)), timeout=timeout_sec):
+                return True
+        except OSError:
+            return False
+
     def _push_to_milvus(self, new_chunks: List[ChunkRecord]) -> None:
+        if not self._is_milvus_reachable():
+            self._milvus_connected = False
+            return
         try:
             from pymilvus import MilvusClient
 
@@ -164,6 +176,8 @@ class HybridRetrievalEngine:
         if self._milvus_hydrated or self._chunk_order:
             return
         self._milvus_hydrated = True
+        if not self._is_milvus_reachable():
+            return
         try:
             from pymilvus import MilvusClient
 
