@@ -128,33 +128,33 @@ class HybridRetrievalEngine:
 
     def _push_to_milvus(self, new_chunks: List[ChunkRecord]) -> None:
         try:
-            from langchain_core.documents import Document as LangChainDocument
-            from langchain_community.vectorstores import Milvus
+            from pymilvus import MilvusClient
 
-            lc_docs = [
-                LangChainDocument(
-                    page_content=c.content,
-                    metadata={
-                        "chunk_id": c.chunk_id,
-                        "doc_id": c.doc_id,
-                        "parent_id": c.parent_id,
-                        "title": c.title,
-                        "source": c.source,
-                        "section": c.section,
-                        "tenant_id": c.tenant_id,
-                        "access_roles": ",".join(c.access_roles),
-                        "parent_content": c.parent_content,
-                    },
+            client = MilvusClient(uri=f"http://{settings.milvus_host}:{settings.milvus_port}")
+            if not client.has_collection(settings.milvus_collection):
+                client.create_collection(
+                    collection_name=settings.milvus_collection,
+                    dimension=len(self._dense_vectors[new_chunks[0].chunk_id]),
+                    metric_type="COSINE",
+                    auto_id=False,
                 )
+            rows = [
+                {
+                    "id": c.chunk_id,
+                    "vector": self._dense_vectors[c.chunk_id],
+                    "doc_id": c.doc_id,
+                    "parent_id": c.parent_id,
+                    "title": c.title,
+                    "source": c.source,
+                    "section": c.section,
+                    "tenant_id": c.tenant_id,
+                    "access_roles": ",".join(c.access_roles),
+                    "content": c.content,
+                    "parent_content": c.parent_content,
+                }
                 for c in new_chunks
             ]
-            Milvus.from_documents(
-                lc_docs,
-                ModelRegistry.get_embeddings(),
-                collection_name=settings.milvus_collection,
-                connection_args={"host": settings.milvus_host, "port": settings.milvus_port},
-                consistency_level="Strong",
-            )
+            client.upsert(collection_name=settings.milvus_collection, data=rows)
             self._milvus_connected = True
         except Exception as exc:
             self._milvus_connected = False
@@ -165,24 +165,29 @@ class HybridRetrievalEngine:
             return
         self._milvus_hydrated = True
         try:
-            from langchain_community.vectorstores import Milvus
+            from pymilvus import MilvusClient
 
-            embedder = ModelRegistry.get_embeddings()
-            vector_db = Milvus(
-                embedding_function=embedder,
+            client = MilvusClient(uri=f"http://{settings.milvus_host}:{settings.milvus_port}")
+            if not client.has_collection(settings.milvus_collection):
+                return
+            docs = client.query(
                 collection_name=settings.milvus_collection,
-                connection_args={"host": settings.milvus_host, "port": settings.milvus_port},
-                consistency_level="Strong",
+                filter="",
+                limit=100,
+                output_fields=[
+                    "id", "doc_id", "parent_id", "title", "source",
+                    "section", "tenant_id", "access_roles", "content", "parent_content",
+                ],
             )
-            docs = vector_db.similarity_search("document overview system information", k=100)
             if not docs:
                 return
+            embedder = ModelRegistry.get_embeddings()
             hydrated: List[ChunkRecord] = []
-            for idx, doc in enumerate(docs):
-                meta = doc.metadata or {}
-                cid = meta.get("chunk_id") or f"chk_milvus_{idx}"
+            for idx, meta in enumerate(docs):
+                cid = meta.get("id") or f"chk_milvus_{idx}"
                 raw_roles = meta.get("access_roles", "public")
                 roles = [r.strip() for r in raw_roles.split(",") if r.strip()] if isinstance(raw_roles, str) else list(raw_roles)
+                content = meta.get("content", "")
                 hydrated.append(
                     ChunkRecord(
                         chunk_id=cid,
@@ -193,10 +198,10 @@ class HybridRetrievalEngine:
                         section=meta.get("section", "Persisted"),
                         tenant_id=meta.get("tenant_id", "default"),
                         access_roles=roles or ["public"],
-                        content=doc.page_content,
-                        parent_content=meta.get("parent_content", doc.page_content),
+                        content=content,
+                        parent_content=meta.get("parent_content", content),
                         chunk_index=idx,
-                        token_estimate=max(1, len(doc.page_content.split())),
+                        token_estimate=max(1, len(content.split())),
                     )
                 )
             if hydrated:

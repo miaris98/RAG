@@ -39,7 +39,10 @@ services:
     environment:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
-    command: minio server /minio_data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: minio server /minio_data --console-address ":9001"
     networks:
       - rag-network
     volumes:
