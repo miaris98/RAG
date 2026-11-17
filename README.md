@@ -1,163 +1,96 @@
-# 📚 RAG Workflow: Local Docker Deployment
+# 🏗️ Staff RAG Engineering Platform (Microservices, Hybrid RRF, Cross-Encoder & LangGraph CRAG/Self-RAG)
 
-This project implements a Retrieval-Augmented Generation (RAG) system using a microservices architecture orchestrated by Docker Compose. It allows users to ingest documents, chunk/embed them into a vector database, and query them using a local LLM.
+This repository implements an interview-ready, production-grade **Retrieval-Augmented Generation (RAG)** platform orchestrated with **Docker Compose**, **FastAPI**, **Milvus**, **RabbitMQ**, **LangGraph**, **Ollama**, and **Gradio**.
 
-## 🏗️ Architecture Overview
+Designed as a **Staff RAG Engineer Showcase**, it goes beyond naive dense-only prototypes by implementing **Small-to-Big Parent-Child Chunking**, **SHA-256 Content-Addressable Deduplication**, **Two-Stage Hybrid Retrieval (Dense Milvus + Sparse BM25 via Reciprocal Rank Fusion + Cross-Encoder Reranking)**, an explicit **Corrective RAG (CRAG) & Self-RAG LangGraph StateGraph**, and a built-in **Quantitative IR Ablation Benchmark** (`HitRate@K`, `MRR@K`, `NDCG@K`, `ContextPrecision@K`).
 
-| Service | Technology | Internal Port | External Port | Description |
+📖 **Preparing for an interview?** Read the companion [**Staff RAG Interview Guide (`docs/INTERVIEW_GUIDE.md`)**](docs/INTERVIEW_GUIDE.md).
+
+---
+
+## 🏛️ System Architecture
+
+| Service | Technology | Internal Port | External Port | Role in RAG Pipeline |
 | :--- | :--- | :--- | :--- | :--- |
-| **Frontend** | Gradio | `7860` | **7860** | User interface for ingestion and querying. |
-| **Backend** | FastAPI | `8000` | **8000** | API handling logic, LangGraph agent, and ingestion. |
-| **LLM** | Ollama | `11434` | **11434** | Hosts the local LLM (`llama3.1`). |
-| **Vector DB** | Milvus | `19530` | **19530** | Stores document embeddings. |
-| **Queue** | RabbitMQ | `5672` | **15672** (UI) | Manages async jobs (infrastructure ready). |
-| **Storage** | MinIO | `9000` | N/A | Object storage dependency for Milvus. |
-| **Coordination**| Etcd | `2379` | N/A | Metadata storage dependency for Milvus. |
+| **Gradio Studio** | Gradio | `7860` | **7860** | 3-Tab UI: Ingestion Studio, Async Query & Trace Inspector, and IR Ablation Runner. |
+| **FastAPI Gateway & Worker** | FastAPI + LangGraph | `8000` | **8000** | Modular RAG engine (`backend/app/`), hybrid retriever, Cross-Encoder reranker, and RabbitMQ worker. |
+| **LLM Server** | Ollama (`llama3.1`) | `11434` | **11434** | Local OpenAI-compatible inference endpoint for cited synthesis. |
+| **Vector DB** | Milvus Standalone | `19530` | **19530** | Stores 384-dim dense bi-encoder embeddings (`all-MiniLM-L6-v2`) with Strong consistency. |
+| **Message Broker** | RabbitMQ | `5672` | **15672** (UI) | Decouples async RAG query execution (`rag_jobs` queue) with automatic local thread fallback. |
+| **Vector Admin UI** | Zilliz Attu | `3000` | **9090** | Visual inspector for Milvus collections, schemas, and entities. |
+| **Object & Meta Storage** | MinIO & Etcd | `9000` / `2379` | Internal | Storage and distributed coordination dependencies for Milvus. |
 
 ---
 
-## ✅ Prerequisites
-
-1.  **Docker Desktop** installed and running.
-2.  **Git** (optional, for cloning).
-3.  **Hardware:** Minimum **8GB-16GB RAM** recommended (running Milvus + Ollama Llama 3 concurrently is resource-intensive).
-
----
-
-## 🚀 Quick Start Guide
-
-### 1. Setup Project Structure
-Ensure your files are organized exactly as shown below:
+## 📂 Modular Project Structure
 
 ```text
 RAG/
 ├── backend/
-│   ├── Dockerfile
-│   ├── main.py
-│   └── requirements.txt
+│   ├── app/
+│   │   ├── config.py              # Environment-backed settings (fixes legacy host.docker.internal bug)
+│   │   ├── models.py              # Pydantic schemas for chunks, traces, and evaluation reports
+│   │   ├── ingestion/
+│   │   │   ├── chunking.py        # Parent-Child (Small-to-Big), Contextual Header & SHA-256 dedup
+│   │   │   └── pipeline.py        # Idempotent Milvus + BM25 indexing & Enterprise Sample Corpus
+│   │   ├── retrieval/
+│   │   │   ├── embeddings.py      # Thread-safe singleton registry (Bi-Encoder, Cross-Encoder, LLM)
+│   │   │   ├── hybrid.py          # Dense Milvus + Sparse BM25 + Reciprocal Rank Fusion (RRF, k=60)
+│   │   │   └── reranker.py        # Cross-Encoder (ms-marco-MiniLM-L-6-v2) + Sigmoid Calibration
+│   │   ├── agent/
+│   │   │   ├── state.py           # Typed LangGraph state schema
+│   │   │   ├── nodes.py           # Query expander, Hybrid retriever, CRAG gate, Web search, Self-RAG grader
+│   │   │   └── graph.py           # Compiled LangGraph StateGraph workflow
+│   │   ├── evaluation/
+│   │   │   ├── metrics.py         # HitRate@K, MRR@K, NDCG@K, ContextPrecision@K
+│   │   │   └── benchmark.py       # Golden Technical QA Benchmark & 4-mode ablation study
+│   │   └── worker/
+│   │       └── consumer.py        # RabbitMQ producer/consumer with in-process thread fallback
+│   ├── tests/
+│   │   └── test_rag_pipeline.py   # Automated unit & integration test suite
+│   ├── main.py                    # FastAPI entrypoint (/health, /ingest, /retrieve, /submit-job, /evaluate)
+│   ├── debug.py                   # CLI diagnostic & ablation inspector
+│   ├── requirements.txt
+│   └── Dockerfile
 ├── frontend/
-│   ├── Dockerfile
-│   ├── app.py
-│   └── requirements.txt
+│   ├── app.py                     # 3-Tab Gradio Observability & Evaluation Studio
+│   ├── requirements.txt           # Lightweight UI dependencies (gradio, requests, pypdf)
+│   └── Dockerfile
+├── docs/
+│   └── INTERVIEW_GUIDE.md         # Staff RAG interview prep guide & mathematical walkthrough
+├── graphify-out/                  # Persistent codebase knowledge graph (graph.html, GRAPH_REPORT.md)
 └── docker-compose.yml
 ```
 
-### 2. Build and Start Services
-Open your terminal in the `RAG/` root directory and run:
+---
 
+## 🚀 Quick Start (Docker Compose)
+
+### 1. Build and Launch All Containers
 ```bash
 docker-compose up -d --build
 ```
-* `-d`: Runs containers in detached mode (background).
-* `--build`: Forces a rebuild of the backend/frontend images.
 
-### 3. ⚠️ Critical Step: Pull the LLM Model
-The **Ollama** container starts empty. You must pull the specific model defined in `backend/main.py` (`llama3.1`) for the backend to work.
-
-Run this command while the containers are running:
+### 2. Pull the Local LLM inside Ollama
 ```bash
 docker exec -it ollama ollama pull llama3.1
 ```
-*Wait for the download to complete (approx. 4.7GB).*
+*(Note: Even before `llama3.1` finishes downloading, the pipeline includes a deterministic grounded synthesis fallback so you can test ingestion, hybrid retrieval, Cross-Encoder reranking, and the Ablation Benchmark immediately!)*
+
+### 3. Open the Interfaces
+- **Gradio RAG Studio:** [http://localhost:7860](http://localhost:7860)
+- **FastAPI Swagger Docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
+- **RabbitMQ Management UI:** [http://localhost:15672](http://localhost:15672) (`guest` / `guest`)
+- **Attu Milvus UI:** [http://localhost:9090](http://localhost:9090)
 
 ---
 
-## 🖥️ How to Use
+## 🧪 Running Tests & CLI Diagnostics Locally
 
-### 1. Access the Interfaces
-* **User Interface (Gradio):** [http://localhost:7860](http://localhost:7860)
-* **Backend Documentation (Swagger UI):** [http://localhost:8000/docs](http://localhost:8000/docs)
-* **RabbitMQ Management:** [http://localhost:15672](http://localhost:15672) (User/Pass: `guest`/`guest`)
+Run the automated test suite or the CLI ablation inspector directly:
 
-### 2. Run a RAG Workflow
-1.  Open the **Gradio UI**.
-2.  **Ingest:** Paste text into the "Ingest a Document" box and click **Ingest Document**.
-    * *Check:* You should see a success message indicating chunking and embedding are complete.
-3.  **Query:** Type a question related to that text in the "Query" box and click **Submit Query**.
-    * *Result:* The LLM will answer based on the context retrieved from Milvus.
-
----
-
-## 🔍 Monitoring & Logs (The Detailed View)
-
-When things go wrong, you need to check the logs of specific containers. Here is how to view and interpret them.
-
-### 1. View All Logs Live
-To see a stream of logs from all services at once:
 ```bash
-docker-compose logs -f
-```
-*(Press `Ctrl+C` to exit)*
-
-### 2. Backend Logs (FastAPI)
-Check here for Python errors, connection issues with Milvus/Ollama, or LangChain errors.
-```bash
-docker-compose logs -f fastapi-backend
-```
-**Look for:**
-* `Application startup complete`: The API is ready.
-* `Connecting to Milvus...`: Connection attempts.
-* `HTTPException`: Errors processing requests.
-
-### 3. Frontend Logs (Gradio)
-Check here if the UI isn't loading or if buttons aren't responding.
-```bash
-docker-compose logs -f frontend
-```
-**Look for:**
-* `Running on local URL:  http://0.0.0.0:7860`: The UI is successfully hosted.
-
-### 4. Ollama Logs (LLM)
-Check here if the model isn't generating text or if the model pull failed.
-```bash
-docker-compose logs -f ollama
-```
-**Look for:**
-* `msg="inference compute"`: Indicates the model is actively processing a prompt.
-* `Error: model "llama3.1" not found`: You forgot the "Critical Step" (Step 3 above).
-
-### 5. Vector DB Logs (Milvus)
-Milvus is complex. If it fails, check the standalone container.
-```bash
-docker-compose logs -f milvus
-```
-**Look for:**
-* `Milvus Proxy started successfully`: The database is ready to accept connections.
-
----
-
-## 🛠️ Troubleshooting Common Issues
-
-### ❌ Error: "Model not found" or "Connection refused" to Ollama
-* **Cause:** You didn't pull the model inside the container.
-* **Fix:** Run `docker exec -it ollama ollama pull llama3.1`.
-* **Check:** Run `docker exec -it ollama ollama list` to verify the model exists.
-
-### ❌ Error: "Failed to connect to backend" in Gradio
-* **Cause:** The frontend container cannot reach the backend container.
-* **Fix:** Ensure `docker-compose.yml` has `backend` service named `fastapi-backend` and the frontend `BACKEND_URL` environment variable matches that name (e.g., `http://fastapi-backend:8000`).
-* **Check:** Your provided `docker-compose.yml` correctly sets this up.
-
-### ❌ Error: Milvus Connection Timeout
-* **Cause:** Milvus takes a while to start (longer than the backend).
-* **Fix:** Restart just the backend service so it retries the connection:
-    ```bash
-    docker-compose restart fastapi-backend
-    ```
-
-### ❌ Port Conflicts (e.g., "Port 8000 is already in use")
-* **Cause:** You have another process (or another Docker instance) running on that port.
-* **Fix:** Stop the other process or change the left-side port in `docker-compose.yml` (e.g., `"8001:8000"`).
-
----
-
-## 🧹 Cleanup
-To stop all containers and remove the networks (data in volumes will persist):
-```bash
-docker-compose down
-```
-
-To stop everything and **delete all data** (RabbitMQ queues, Milvus vectors, Ollama models):
-```bash
-docker-compose down -v
+cd backend
+pytest -v
+python debug.py
 ```
