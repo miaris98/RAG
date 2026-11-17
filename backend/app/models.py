@@ -27,6 +27,9 @@ class DocumentInput(BaseModel):
         default=True,
         description="Run PII redaction and indirect prompt injection sanitization before indexing.",
     )
+    retention_days: int = Field(default=90, ge=1, le=3650, description="GDPR data retention TTL in days.")
+    lawful_basis: str = Field(default="legitimate_interest", description="GDPR Article 6 lawful basis.")
+    version: int = Field(default=1, ge=1, description="Document version for precedence ranking.")
     metadata: Optional[Dict[str, Any]] = Field(default=None, description="Optional custom metadata tags.")
 
 
@@ -109,6 +112,16 @@ class QueryInput(BaseModel):
         default=True,
         description="Run PII redaction & prompt injection defense on incoming query.",
     )
+    session_id: Optional[str] = Field(
+        default=None,
+        description="Optional session ID for multi-turn conversational memory & coreference resolution.",
+    )
+    max_retries: int = Field(
+        default=1,
+        ge=0,
+        le=3,
+        description="Maximum cyclic Self-RAG retry loops if faithfulness falls below threshold.",
+    )
 
 
 class RetrieveDebugRequest(BaseModel):
@@ -138,6 +151,9 @@ class PipelineTrace(BaseModel):
     self_rag_verdict: str = "grounded"
     faithfulness_score: float = 1.0
     citation_count: int = 0
+    retry_count: int = 0
+    critique_history: List[str] = Field(default_factory=list)
+    session_id: Optional[str] = None
     stage_latencies_ms: Dict[str, float] = Field(default_factory=dict)
     total_latency_ms: float = 0.0
     retrieved_chunks: List[RetrievedChunk] = Field(default_factory=list)

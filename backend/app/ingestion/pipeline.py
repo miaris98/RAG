@@ -3,6 +3,7 @@
 import time
 from typing import Dict, List
 
+from app.guardrails.audit import audit_logger
 from app.guardrails.security import guardrails
 from app.ingestion.chunking import ChunkingEngine
 from app.models import DocumentInput
@@ -85,6 +86,20 @@ class IngestionPipeline:
         invalidated_cache_entries = semantic_cache.invalidate_by_doc_id(doc_id) if doc_id else 0
         elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
         parent_ids = {c.parent_id for c in chunks}
+
+        audit_logger.log_event(
+            event_type="document_ingested",
+            actor_tenant=doc_input.tenant_id,
+            actor_roles=doc_input.access_roles,
+            doc_ids=[doc_id] if doc_id else [],
+            chunk_ids=[c.chunk_id for c in chunks],
+            summary=f"Ingested '{doc_input.title}' ({added} new, {skipped} deduped)",
+            metadata={
+                "lawful_basis": doc_input.lawful_basis,
+                "retention_days": doc_input.retention_days,
+                "guardrail_flags": guardrail_flags,
+            },
+        )
 
         return {
             "status": "success",

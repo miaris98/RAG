@@ -16,6 +16,12 @@ class RAGGraphState(TypedDict, total=False):
     enable_web_search: bool
     enable_self_rag: bool
     enable_guardrails: bool
+    session_id: str
+    max_retries: int
+
+    # Cyclic Self-Correction State
+    retry_count: int
+    critique_history: List[str]
 
     # Security Guardrails
     guardrail_flags: List[str]

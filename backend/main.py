@@ -15,6 +15,7 @@ from fastapi.responses import StreamingResponse
 from app.agent.graph import stream_rag_pipeline_sse
 from app.config import settings
 from app.evaluation.benchmark import run_ablation_benchmark
+from app.guardrails.audit import audit_logger
 from app.ingestion.pipeline import ingestion_pipeline
 from app.models import (
     DocumentInput,
@@ -22,10 +23,17 @@ from app.models import (
     QueryInput,
     RetrieveDebugRequest,
 )
+from app.observability.metrics import metrics_collector
 from app.retrieval.embeddings import ModelRegistry
 from app.retrieval.hybrid import retrieval_engine
+from app.retrieval.labeled_queries import labeled_query_store
 from app.retrieval.semantic_cache import semantic_cache
-from app.worker.consumer import enqueue_rag_job, get_job_state, start_background_worker
+from app.worker.consumer import (
+    enqueue_ingestion_job,
+    enqueue_rag_job,
+    get_job_state,
+    start_background_worker,
+)
 
 
 @asynccontextmanager
@@ -73,6 +81,47 @@ async def ingest_document(doc: DocumentInput):
         return ingestion_pipeline.ingest(doc)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {exc}") from exc
+
+
+@app.post("/ingest-async")
+async def ingest_document_async(doc: DocumentInput):
+    """Queues an asynchronous document ingestion job and returns a job_id."""
+    if not doc.content or not doc.content.strip():
+        raise HTTPException(status_code=400, detail="Content cannot be empty.")
+    return enqueue_ingestion_job(doc)
+
+
+@app.delete("/documents/{doc_id}")
+async def gdpr_erase_document(doc_id: str):
+    """GDPR Article 17 Right-to-be-Forgotten: surgically deletes doc_id across all stores + logs audit."""
+    chunks_deleted = retrieval_engine.delete_by_doc_id(doc_id)
+    cache_evicted = semantic_cache.invalidate_by_doc_id(doc_id)
+    metrics_collector.record_gdpr_erasure()
+    audit_event = audit_logger.log_event(
+        event_type="gdpr_article17_erasure",
+        doc_ids=[doc_id],
+        summary=f"Erased doc_id={doc_id} ({chunks_deleted} chunks, {cache_evicted} cache entries)",
+        metadata={"chunks_deleted": chunks_deleted, "cache_evicted": cache_evicted},
+    )
+    return {
+        "status": "erased",
+        "doc_id": doc_id,
+        "chunks_deleted": chunks_deleted,
+        "cache_entries_evicted": cache_evicted,
+        "audit_event_hash": audit_event["event_hash"],
+    }
+
+
+@app.get("/metrics")
+async def get_observability_metrics():
+    """Returns rolling p50/p95/p99 latencies, cache hit rate, guardrail triggers, and circuit breakers."""
+    return metrics_collector.snapshot()
+
+
+@app.get("/audit-logs")
+async def get_audit_logs(limit: int = 100):
+    """Returns tamper-evident SHA-256 hash-chained audit logs and chain integrity verification."""
+    return audit_logger.get_logs(limit=limit)
 
 
 @app.post("/ingest-sample")

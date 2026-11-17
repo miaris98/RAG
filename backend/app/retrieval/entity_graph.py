@@ -105,6 +105,18 @@ class EntityKnowledgeGraph:
                 "total_linked_chunks": len(self._chunk_to_entities),
             }
 
+    def remove_chunks(self, chunk_ids: Set[str]) -> None:
+        """Removes erased chunk_ids from the bipartite entity graph (GDPR Article 17)."""
+        with self._lock:
+            for cid in chunk_ids:
+                ents = self._chunk_to_entities.pop(cid, set())
+                for ent in ents:
+                    cset = self._entity_to_chunks.get(ent)
+                    if cset:
+                        cset.discard(cid)
+                        if not cset:
+                            self._entity_to_chunks.pop(ent, None)
+
     def clear(self) -> None:
         with self._lock:
             self._entity_to_chunks.clear()

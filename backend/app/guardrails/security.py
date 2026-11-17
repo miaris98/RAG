@@ -34,15 +34,6 @@ class SecurityGuardrails:
         sanitized = text
         flags: List[str] = []
 
-        if block_injections:
-            injection_found = False
-            for pattern in self.INJECTION_PATTERNS:
-                if pattern.search(sanitized):
-                    sanitized = pattern.sub("[BLOCKED_INJECTION_ATTEMPT]", sanitized)
-                    injection_found = True
-            if injection_found:
-                flags.append("prompt_injection_detected")
-
         if redact_pii:
             pii_found = False
             if self.API_KEY_PATTERN.search(sanitized):
@@ -56,6 +47,15 @@ class SecurityGuardrails:
                 pii_found = True
             if pii_found:
                 flags.append("pii_redacted")
+
+        if block_injections:
+            injection_found = False
+            for pattern in self.INJECTION_PATTERNS:
+                if pattern.search(sanitized):
+                    sanitized = pattern.sub("[BLOCKED_INJECTION_ATTEMPT]", sanitized)
+                    injection_found = True
+            if injection_found:
+                flags.append("prompt_injection_detected")
 
         return sanitized, flags
 

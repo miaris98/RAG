@@ -15,6 +15,7 @@ from app.config import settings
 from app.models import ChunkRecord, RetrievalMode, RetrievedChunk
 from app.retrieval.embeddings import ModelRegistry
 from app.retrieval.entity_graph import entity_graph
+from app.retrieval.postprocessor import context_postprocessor
 from app.retrieval.reranker import CrossEncoderReranker, tokenize_content_words
 
 
@@ -397,12 +398,28 @@ class HybridRetrievalEngine:
                     reverse=True,
                 )
 
-            # 6. Stage 2: Cross-Encoder Reranking
+            # 6. Stage 2: Cross-Encoder Reranking + Negation Adjustment + MMR Diversity
             if mode in ("hybrid_rerank", "hybrid_graph_rerank"):
                 pool = candidates[: max(top_k * 3, 12)]
-                return self._reranker.rerank(primary_query, pool, top_k=top_k)
+                reranked = self._reranker.rerank(primary_query, pool, top_k=max(top_k * 2, top_k))
+                reranked = context_postprocessor.apply_negation_adjustment(primary_query, reranked)
+                return context_postprocessor.select_mmr(reranked, top_k=top_k)
 
             return candidates[:top_k]
+
+    def delete_by_doc_id(self, doc_id: str) -> int:
+        """GDPR Article 17 Surgical Erasure: removes all chunks of doc_id across Dense, BM25, and Entity Graph."""
+        with self._lock:
+            to_remove = {cid for cid, chk in self._chunks_by_id.items() if chk.doc_id == doc_id}
+            if not to_remove:
+                return 0
+            for cid in to_remove:
+                self._chunks_by_id.pop(cid, None)
+                self._dense_vectors.pop(cid, None)
+            self._chunk_order = [cid for cid in self._chunk_order if cid not in to_remove]
+            entity_graph.remove_chunks(to_remove)
+            self._rebuild_bm25()
+            return len(to_remove)
 
     def stats(self) -> dict:
         with self._lock:

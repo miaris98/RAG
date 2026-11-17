@@ -13,7 +13,8 @@ except ImportError:
 
 from app.agent.graph import execute_rag_pipeline
 from app.config import settings
-from app.models import QueryInput
+from app.ingestion.pipeline import ingestion_pipeline
+from app.models import DocumentInput, QueryInput
 
 
 JOBS: Dict[str, Dict[str, Any]] = {}
@@ -117,6 +118,39 @@ def enqueue_rag_job(query_input: QueryInput) -> Dict[str, Any]:
             t.start()
             return {"job_id": job_id, "status": "queued", "broker": "in_process_thread_fallback"}
         raise RuntimeError(f"RabbitMQ unavailable: {exc}") from exc
+
+
+def process_ingestion_job(doc_payload: Dict[str, Any], job_id: str) -> None:
+    """Executes asynchronous document chunking, guardrail sanitization, and indexing."""
+    with _JOBS_LOCK:
+        JOBS[job_id]["status"] = "processing"
+        JOBS[job_id]["started_at"] = time.time()
+    try:
+        doc_input = DocumentInput(**doc_payload)
+        res = ingestion_pipeline.ingest(doc_input)
+        with _JOBS_LOCK:
+            JOBS[job_id].update(
+                {
+                    "status": "completed",
+                    "result": res,
+                    "completed_at": time.time(),
+                }
+            )
+    except Exception as exc:
+        with _JOBS_LOCK:
+            JOBS[job_id].update({"status": "failed", "result": str(exc), "completed_at": time.time()})
+
+
+def enqueue_ingestion_job(doc_input: DocumentInput) -> Dict[str, Any]:
+    """Queues an async document ingestion job (RabbitMQ or local thread fallback)."""
+    job_id = str(uuid.uuid4())
+    payload = doc_input.model_dump()
+    with _JOBS_LOCK:
+        JOBS[job_id] = {"job_id": job_id, "status": "queued", "result": None, "created_at": time.time()}
+
+    t = threading.Thread(target=process_ingestion_job, args=(payload, job_id), daemon=True)
+    t.start()
+    return {"job_id": job_id, "status": "queued", "broker": "async_ingestion_worker"}
 
 
 def get_job_state(job_id: str) -> Optional[Dict[str, Any]]:

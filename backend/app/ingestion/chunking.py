@@ -162,6 +162,28 @@ class ChunkingEngine:
             rec.access_roles = roles
         return records
 
+    def _split_preserving_tables(self, text: str, splitter: RecursiveCharacterTextSplitter) -> List[str]:
+        """Splits text while re-injecting Markdown table headers if a table spans multiple chunks."""
+        lines = text.splitlines()
+        # Check if text contains a Markdown table header + separator (| --- |)
+        table_header = None
+        for i in range(len(lines) - 1):
+            if "|" in lines[i] and re.match(r"^\s*\|?\s*:?-{2,}:?\s*\|", lines[i + 1]):
+                table_header = f"{lines[i]}\n{lines[i + 1]}"
+                break
+
+        raw_splits = splitter.split_text(text)
+        if not table_header or len(raw_splits) <= 1:
+            return raw_splits
+
+        enriched: List[str] = []
+        for idx, chunk in enumerate(raw_splits):
+            if idx > 0 and "|" in chunk and table_header.splitlines()[0] not in chunk:
+                enriched.append(f"{table_header}\n{chunk}")
+            else:
+                enriched.append(chunk)
+        return enriched
+
     def _chunk_parent_child(
         self,
         text: str,
@@ -170,22 +192,22 @@ class ChunkingEngine:
         source: str,
         base_meta: Dict[str, Any],
     ) -> List[ChunkRecord]:
-        """Small-to-Big (Parent-Child) strategy:
-        - Indexes fine-grained Child chunks (380 chars) with Contextual Headers for high retrieval precision.
-        - Stores the surrounding Parent chunk (1200 chars) on each record so synthesis gets full context.
+        """Small-to-Big (Parent-Child) strategy with Table-Header Preservation:
+        - Indexes fine-grained Child chunks with Contextual Headers for high retrieval precision.
+        - Stores the surrounding Parent chunk on each record so synthesis gets full context.
         """
         records: List[ChunkRecord] = []
         sections = extract_sections(text)
         chunk_idx = 0
 
         for section_name, section_body in sections:
-            parent_texts = self.parent_splitter.split_text(section_body)
+            parent_texts = self._split_preserving_tables(section_body, self.parent_splitter)
             for p_text in parent_texts:
                 parent_id = f"par_{compute_content_hash(f'{doc_id}:{section_name}', p_text)[:16]}"
                 header = format_contextual_header(title, source, section_name)
                 enriched_parent = f"{header}{p_text}"
 
-                child_texts = self.child_splitter.split_text(p_text)
+                child_texts = self._split_preserving_tables(p_text, self.child_splitter)
                 if not child_texts:
                     child_texts = [p_text]
 

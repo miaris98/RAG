@@ -7,9 +7,12 @@ from typing import Any, Dict, List
 from app.agent.state import RAGGraphState
 from app.config import settings
 from app.guardrails.security import guardrails
+from app.memory.conversation import conversation_memory
 from app.models import RetrievedChunk
+from app.observability.metrics import llm_circuit_breaker, web_circuit_breaker
 from app.retrieval.embeddings import ModelRegistry
 from app.retrieval.hybrid import retrieval_engine
+from app.retrieval.postprocessor import context_postprocessor
 from app.retrieval.reranker import tokenize_content_words
 
 
@@ -30,6 +33,10 @@ def analyze_and_expand_query(state: RAGGraphState) -> Dict[str, Any]:
     guardrail_flags: List[str] = []
     if enable_guardrails and raw_query:
         raw_query, guardrail_flags = guardrails.sanitize_text(raw_query)
+
+    session_id = state.get("session_id") or ""
+    if session_id and raw_query:
+        raw_query = conversation_memory.resolve_query(session_id, raw_query)
 
     expanded: List[str] = [raw_query] if raw_query else []
     query_route = "standard"
@@ -117,8 +124,9 @@ def retrieve_and_rerank(state: RAGGraphState) -> Dict[str, Any]:
         dense_weight=float(state.get("dense_weight", settings.dense_weight)),
         sparse_weight=float(state.get("sparse_weight", settings.sparse_weight)),
     )
+    relevant_objs = context_postprocessor.lost_in_the_middle_reorder([c for c in chunks if c.is_relevant])
     serialized_all = [c.model_dump() for c in chunks]
-    serialized_relevant = [c.model_dump() for c in chunks if c.is_relevant]
+    serialized_relevant = [c.model_dump() for c in relevant_objs]
 
     tools = list(state.get("tools_used") or [])
     if "document_retriever" not in tools:
@@ -179,13 +187,18 @@ def external_web_search(state: RAGGraphState) -> Dict[str, Any]:
     web_text = ""
 
     if state.get("enable_web_search", True):
-        try:
-            from langchain_community.tools import DuckDuckGoSearchRun
+        if not web_circuit_breaker.allow_request():
+            web_text = "External web search skipped (Circuit Breaker OPEN)."
+        else:
+            try:
+                from langchain_community.tools import DuckDuckGoSearchRun
 
-            search = DuckDuckGoSearchRun()
-            web_text = str(search.invoke(query)).strip()
-        except Exception as exc:
-            web_text = f"External web search unavailable ({exc})."
+                search = DuckDuckGoSearchRun()
+                web_text = str(search.invoke(query)).strip()
+                web_circuit_breaker.record_success()
+            except Exception as exc:
+                web_circuit_breaker.record_failure()
+                web_text = f"External web search unavailable ({exc})."
     else:
         web_text = "External web search disabled by request configuration."
 
@@ -293,15 +306,20 @@ CRITICAL INSTRUCTIONS:
    - Explicitly highlight any conflict, version difference, or agreement between the internal documents and the internet.
 """
 
-    try:
-        llm = ModelRegistry.get_llm()
-        response = llm.invoke(prompt)
-        draft = str(response.content).strip()
-        if not draft:
-            draft = _build_extractive_fallback_answer(query, relevant_chunks, web_results)
-    except Exception as exc:
-        print(f"[synthesize_cited_answer] LLM call failed, using deterministic grounded synthesis: {exc}")
+    if not llm_circuit_breaker.allow_request():
         draft = _build_extractive_fallback_answer(query, relevant_chunks, web_results)
+    else:
+        try:
+            llm = ModelRegistry.get_llm()
+            response = llm.invoke(prompt)
+            draft = str(response.content).strip()
+            llm_circuit_breaker.record_success()
+            if not draft:
+                draft = _build_extractive_fallback_answer(query, relevant_chunks, web_results)
+        except Exception as exc:
+            llm_circuit_breaker.record_failure()
+            print(f"[synthesize_cited_answer] LLM call failed, using deterministic grounded synthesis: {exc}")
+            draft = _build_extractive_fallback_answer(query, relevant_chunks, web_results)
 
     latencies = dict(state.get("stage_latencies_ms") or {})
     latencies["generation_ms"] = round((time.perf_counter() - t0) * 1000.0, 2)
@@ -369,11 +387,41 @@ def verify_faithfulness_self_rag(state: RAGGraphState) -> Dict[str, Any]:
     latencies = dict(state.get("stage_latencies_ms") or {})
     latencies["self_rag_verification_ms"] = round((time.perf_counter() - t0) * 1000.0, 2)
 
+    retry_count = int(state.get("retry_count", 0))
+    max_retries = int(state.get("max_retries", 1))
+    critique_history = list(state.get("critique_history") or [])
+    top_k = int(state.get("top_k", settings.rerank_top_k))
+
+    if enable_self_rag and relevant_chunks and faithfulness < 0.75 and retry_count < max_retries:
+        critique_history.append(
+            f"Retry {retry_count + 1}: faithfulness={faithfulness:.3f} < 0.75; broadening top_k from {top_k} to {min(10, top_k + 2)}."
+        )
+        return {
+            "final_answer": final_answer,
+            "self_rag_verdict": "retrying",
+            "faithfulness_score": faithfulness,
+            "citation_count": citation_count,
+            "retry_count": retry_count + 1,
+            "top_k": min(10, top_k + 2),
+            "critique_history": critique_history,
+            "tools_used": tools,
+            "stage_latencies_ms": latencies,
+        }
+
     return {
         "final_answer": final_answer,
         "self_rag_verdict": verdict,
         "faithfulness_score": faithfulness,
         "citation_count": citation_count,
+        "retry_count": retry_count,
+        "critique_history": critique_history,
         "tools_used": tools,
         "stage_latencies_ms": latencies,
     }
+
+
+def route_after_self_rag(state: RAGGraphState) -> str:
+    """Cyclic Self-Correction Router: loops back to retrieve_and_rerank when verdict == 'retrying'."""
+    if state.get("self_rag_verdict") == "retrying":
+        return "retrieve_and_rerank"
+    return "end"
