@@ -24,7 +24,10 @@ Designed as a **Staff+ / Principal RAG Engineer Showcase**, it implements real-w
 - **GDPR, Security Guardrails & Tamper-Evident Auditability:**
   - Redacts PII (emails, SSNs, API keys) and blocks indirect prompt injections on ingestion and query paths.
   - Supports **GDPR Article 17 Right-to-be-Forgotten** (`DELETE /documents/{doc_id}`) across Dense, BM25, Entity Graph, and Semantic Cache.
-  - Records every action in a **SHA-256 hash-chained immutable audit log** (`GET /audit-logs`) and exposes **Circuit Breakers** + `p50`/`p95`/`p99` telemetry at `GET /metrics`.
+  - Records every action in a **SHA-256 hash-chained immutable audit log** (`GET /audit-logs`), generates an executive **System Audit Dossier** (`GET /compliance/audit-report`), and exposes a dedicated **Tab 4 Compliance Audit & Observability Center** in Gradio.
+- **Full-Stack Observability (Langfuse + Prometheus + Grafana):**
+  - **Langfuse-Compatible Distributed Tracing:** Records hierarchical traces & per-node spans at `GET /traces` and optionally forwards batches to Langfuse when `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` are set.
+  - **Prometheus & Pre-Provisioned Grafana:** Exposes Prometheus metrics at `GET /metrics/prometheus`, scraped automatically by Prometheus (`:9091`) and visualized in Grafana (`:3000`).
 - **MCP Server & CI Eval-Driven Development (EDD):** Exposes RBAC-scoped RAG tools in [`backend/mcp_server.py`](backend/mcp_server.py) and enforces retrieval regression gates in [`.github/workflows/edd.yml`](.github/workflows/edd.yml).
 
 ---
@@ -33,8 +36,10 @@ Designed as a **Staff+ / Principal RAG Engineer Showcase**, it implements real-w
 
 | Service | Technology | Internal Port | External Port | Role in RAG Pipeline |
 | :--- | :--- | :--- | :--- | :--- |
-| **Gradio Studio** | Gradio | `7860` | **7860** | 3-Tab UI: Ingestion/RBAC Studio, Live SSE & RabbitMQ Query Studio, 5-Mode Ablation Runner. |
+| **Gradio Studio** | Gradio | `7860` | **7860** | 4-Tab UI: Ingestion/RBAC, SSE & RabbitMQ Query, 5-Mode Eval, Compliance Audit Center. |
 | **FastAPI Gateway & Worker** | FastAPI + LangGraph | `8000` | **8000** | Modular RAG engine (`backend/app/`), hybrid/graph retriever, guardrails, and worker pool. |
+| **Prometheus** | Prometheus | `9090` | **9091** | Scrapes `GET /metrics/prometheus` every 5s for latencies, cache, guardrails & audit chain. |
+| **Grafana** | Grafana | `3000` | **3000** | Pre-provisioned `Staff+ RAG Observability & Audit Dashboard` (`admin`/`admin`). |
 | **LLM Server** | Ollama (`llama3.1`) | `11434` | **11434** | Local OpenAI-compatible inference endpoint for cited synthesis. |
 | **Vector DB** | Milvus Standalone | `19530` | **19530** | Stores 384-dim dense bi-encoder embeddings with Strong consistency. |
 | **Message Broker** | RabbitMQ | `5672` | **15672** (UI) | Decouples async query & ingestion jobs with automatic local thread fallback. |
@@ -109,11 +114,16 @@ docker exec -it ollama ollama pull llama3.1
 ```
 
 ### 3. Access the Interfaces
-- **Gradio Studio UI:** [http://localhost:7860](http://localhost:7860)
+- **Gradio Studio UI (4 Tabs incl. Audit Center):** [http://localhost:7860](http://localhost:7860)
 - **FastAPI Swagger Docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
-- **Observability Metrics (`p50`/`p95`/`p99`):** [http://localhost:8000/metrics](http://localhost:8000/metrics)
+- **Grafana Observability Dashboard:** [http://localhost:3000](http://localhost:3000) (`admin` / `admin`)
+- **Prometheus Targets & Queries:** [http://localhost:9091](http://localhost:9091)
+- **Compliance Audit Dossier (`JSON` + `Markdown`):** [http://localhost:8000/compliance/audit-report](http://localhost:8000/compliance/audit-report)
+- **Distributed Traces (`Langfuse`-compatible):** [http://localhost:8000/traces](http://localhost:8000/traces)
+- **Prometheus Exposition:** [http://localhost:8000/metrics/prometheus](http://localhost:8000/metrics/prometheus)
 - **Tamper-Evident Audit Logs:** [http://localhost:8000/audit-logs](http://localhost:8000/audit-logs)
 - **RabbitMQ Management UI:** [http://localhost:15672](http://localhost:15672) (`guest` / `guest`)
+- **MinIO Object Storage Console:** [http://localhost:9001](http://localhost:9001) (`minioadmin` / `minioadmin`)
 - **Attu Milvus UI:** [http://localhost:9090](http://localhost:9090)
 
 ---

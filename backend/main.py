@@ -9,8 +9,9 @@ Orchestrates:
 """
 
 from contextlib import asynccontextmanager
+import time
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from app.agent.graph import stream_rag_pipeline_sse
 from app.config import settings
@@ -24,6 +25,7 @@ from app.models import (
     RetrieveDebugRequest,
 )
 from app.observability.metrics import metrics_collector
+from app.observability.tracing import trace_collector
 from app.retrieval.embeddings import ModelRegistry
 from app.retrieval.hybrid import retrieval_engine
 from app.retrieval.labeled_queries import labeled_query_store
@@ -118,10 +120,107 @@ async def get_observability_metrics():
     return metrics_collector.snapshot()
 
 
+@app.get("/metrics/prometheus")
+async def get_prometheus_metrics():
+    """Exposes RAG operational, latency, corpus, circuit breaker, and audit integrity metrics for Prometheus."""
+    audit_state = audit_logger.get_logs(limit=1)
+    prom_text = metrics_collector.format_prometheus(
+        corpus_stats=retrieval_engine.stats(),
+        chain_valid=bool(audit_state["chain_valid"]),
+        trace_stats=trace_collector.stats(),
+    )
+    return PlainTextResponse(content=prom_text, media_type="text/plain; version=0.0.4; charset=utf-8")
+
+
+@app.get("/traces")
+async def get_distributed_traces(limit: int = 50):
+    """Returns Langfuse-compatible distributed RAG traces and per-node span timings."""
+    return trace_collector.list_traces(limit=limit)
+
+
+@app.get("/traces/{trace_id}")
+async def get_single_trace(trace_id: str):
+    """Retrieves a single distributed RAG trace and its spans by trace_id."""
+    rec = trace_collector.get_trace(trace_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Trace not found")
+    return rec
+
+
+@app.get("/documents")
+async def list_indexed_documents():
+    """Returns per-document inventory, RBAC role lineage, and chunk counts for audit inspection."""
+    docs = retrieval_engine.list_documents()
+    return {"count": len(docs), "documents": docs}
+
+
 @app.get("/audit-logs")
 async def get_audit_logs(limit: int = 100):
     """Returns tamper-evident SHA-256 hash-chained audit logs and chain integrity verification."""
     return audit_logger.get_logs(limit=limit)
+
+
+@app.get("/compliance/audit-report")
+async def get_compliance_audit_report(limit: int = 50):
+    """Generates a complete System Compliance & Audit Dossier for regulatory/internal audits."""
+    audit_data = audit_logger.get_logs(limit=limit)
+    metrics_snap = metrics_collector.snapshot()
+    docs = retrieval_engine.list_documents()
+    traces_data = trace_collector.list_traces(limit=20)
+    corpus_stats = retrieval_engine.stats()
+
+    chain_badge = "VALID (Cryptographically Verified)" if audit_data["chain_valid"] else "TAMPERED (Verification Failed)"
+    generated_utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+    lat = metrics_snap["latency_ms"]
+    cbs = metrics_snap["circuit_breakers"]
+
+    lines = [
+        "# 🛡️ System Compliance & Observability Audit Dossier",
+        f"- **Generated:** `{generated_utc}`",
+        f"- **SHA-256 Audit Chain Integrity:** **{chain_badge}** (`{audit_data['total_events']}` total events, head=`{audit_data['head_hash'][:16]}...`)",
+        f"- **GDPR Article 17 Erasures Executed:** `{metrics_snap['gdpr_erasures_total']}` | "
+        f"**Security Guardrail Triggers (PII/Injection):** `{metrics_snap['guardrail_triggers_total']}`",
+        f"- **Operational SLOs:** `total_queries={metrics_snap['total_queries']}`, "
+        f"`p50={lat['p50']} ms`, `p95={lat['p95']} ms`, `p99={lat['p99']} ms`, "
+        f"`cache_hit_rate={metrics_snap['cache_hit_rate']:.2%}`, `crag_fallback_rate={metrics_snap['crag_fallback_rate']:.2%}`",
+        f"- **Downstream Circuit Breakers:** `ollama_llm={cbs['ollama_llm']['state']}`, `duckduckgo_web={cbs['duckduckgo_web']['state']}`",
+        f"- **Langfuse Distributed Tracing:** `{traces_data['total_traces']}` traces recorded "
+        f"(Langfuse external sync configured: `{traces_data['langfuse_configured']}`, synced: `{traces_data['langfuse_synced_count']}`)",
+        "",
+        f"## 📚 Active Corpus & RBAC Lineage (`{len(docs)}` Documents, `{corpus_stats.get('total_chunks', 0)}` Chunks)",
+        "| Doc ID | Title | Tenant | Authorized Roles | Chunks | Parent Windows | Source |",
+        "| :--- | :--- | :--- | :--- | :---: | :---: | :--- |",
+    ]
+    if not docs:
+        lines.append("| - | _No active documents in corpus_ | - | - | 0 | 0 | - |")
+    else:
+        for d in docs:
+            roles_str = ", ".join(d["access_roles"])  # type: ignore[arg-type]
+            lines.append(
+                f"| `{d['doc_id']}` | {d['title']} | `{d['tenant_id']}` | `{roles_str}` | "
+                f"{d['chunk_count']} | {d['parent_windows_count']} | `{d['source']}` |"
+            )
+
+    gdpr_summary = {
+        "article_17_erasures_total": metrics_snap["gdpr_erasures_total"],
+        "pii_and_injection_guardrail_triggers": metrics_snap["guardrail_triggers_total"],
+        "rbac_prefiltering_enabled": True,
+        "audit_chain_valid": audit_data["chain_valid"],
+        "active_documents_count": len(docs),
+    }
+
+    return {
+        "generated_at_utc": generated_utc,
+        "chain_valid": audit_data["chain_valid"],
+        "head_hash": audit_data["head_hash"],
+        "total_audit_events": audit_data["total_events"],
+        "gdpr_compliance_summary": gdpr_summary,
+        "metrics_snapshot": metrics_snap,
+        "document_inventory": docs,
+        "recent_traces": traces_data["traces"],
+        "audit_events": audit_data["events"],
+        "markdown_dossier": "\n".join(lines),
+    }
 
 
 @app.post("/ingest-sample")

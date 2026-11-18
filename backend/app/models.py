@@ -137,6 +137,7 @@ class RetrieveDebugRequest(BaseModel):
 class PipelineTrace(BaseModel):
     """End-to-end observability telemetry attached to every completed RAG job."""
 
+    trace_id: Optional[str] = None
     original_query: str
     query_route: str = "standard"
     expanded_queries: List[str] = Field(default_factory=list)

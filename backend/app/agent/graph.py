@@ -93,6 +93,7 @@ from app.guardrails.audit import audit_logger
 from app.memory.conversation import conversation_memory
 from app.models import PipelineTrace, QueryInput, RetrievedChunk
 from app.observability.metrics import metrics_collector
+from app.observability.tracing import trace_collector
 from app.retrieval.labeled_queries import labeled_query_store
 from app.retrieval.semantic_cache import semantic_cache
 
@@ -208,6 +209,8 @@ def _record_observability_and_audit(query_input: QueryInput, output: Dict[str, A
 
     doc_ids = sorted({c["doc_id"] for c in trace.get("retrieved_chunks", []) if c.get("doc_id")})
     chunk_ids = [c["chunk_id"] for c in trace.get("retrieved_chunks", []) if c.get("chunk_id")]
+    trace_id = trace_collector.record_trace(query_input, output)
+    trace["trace_id"] = trace_id
     audit_logger.log_event(
         event_type="rag_query",
         actor_tenant=query_input.tenant_id,
@@ -216,6 +219,7 @@ def _record_observability_and_audit(query_input: QueryInput, output: Dict[str, A
         chunk_ids=chunk_ids,
         summary=f"Query='{query_input.text[:120]}' route={trace['query_route']} cache_hit={trace['cache_hit']}",
         metadata={
+            "trace_id": trace_id,
             "crag_decision": trace["crag_decision"],
             "faithfulness_score": trace["faithfulness_score"],
             "guardrail_flags": trace.get("guardrail_flags", []),

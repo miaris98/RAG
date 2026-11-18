@@ -109,6 +109,90 @@ def run_evaluation_on_backend(top_k: int = 3) -> Dict[str, Any]:
         return {"status": "error", "message": str(exc)}
 
 
+def fetch_compliance_audit_dashboard() -> Tuple[str, str, str, str]:
+    """Fetches /compliance/audit-report and /metrics/prometheus and formats all 4 Audit Center panels."""
+    try:
+        report_resp = requests.get(f"{BACKEND_URL}/compliance/audit-report", params={"limit": 50}, timeout=15)
+        report_resp.raise_for_status()
+        report = report_resp.json()
+    except Exception as exc:
+        err = f"❌ Could not fetch audit report from backend: `{exc}`"
+        return err, "_Unavailable_", "_Unavailable_", "# Error fetching Prometheus metrics"
+
+    try:
+        prom_resp = requests.get(f"{BACKEND_URL}/metrics/prometheus", timeout=10)
+        prom_resp.raise_for_status()
+        prom_text = prom_resp.text
+    except Exception as exc:
+        prom_text = f"# Error fetching /metrics/prometheus: {exc}"
+
+    dossier_md = report.get("markdown_dossier", "_No dossier available._")
+
+    # Format Distributed Traces (Langfuse / Span Waterfall)
+    traces = report.get("recent_traces") or []
+    trace_lines = [
+        "### 🔭 Distributed Traces & Span Waterfall (Langfuse / OpenTelemetry)",
+        "| Trace ID | Query (PII-Sanitized) | Route | Cache | Faithfulness | Latency | Node Spans | Langfuse |",
+        "| :--- | :--- | :--- | :---: | :---: | :---: | :--- | :--- |",
+    ]
+    if not traces:
+        trace_lines.append("| - | _No queries traced yet_ | - | - | - | - | - | - |")
+    else:
+        for tr in traces:
+            spans_str = " → ".join(f"`{s['name']}:{s['duration_ms']}ms`" for s in tr.get("spans", []))
+            q_short = (tr.get("query", "")[:42] + "...") if len(tr.get("query", "")) > 42 else tr.get("query", "")
+            trace_lines.append(
+                f"| `{tr.get('trace_id', '')[:10]}` | {q_short} | `{tr.get('query_route')}` | "
+                f"`{tr.get('cache_hit')}` | `{tr.get('faithfulness_score', 0.0):.2f}` | "
+                f"`{tr.get('total_latency_ms', 0.0):.2f} ms` | {spans_str} | `{tr.get('langfuse_status')}` |"
+            )
+
+    # Format SHA-256 Tamper-Evident Audit Ledger
+    events = report.get("audit_events") or []
+    chain_badge = "✅ CHAIN VALID" if report.get("chain_valid") else "❌ TAMPER DETECTED"
+    ledger_lines = [
+        f"### 🔐 Tamper-Evident SHA-256 Audit Ledger ({chain_badge})",
+        "| Seq | Event Type | Tenant | Roles | Doc IDs | Summary | Hash Chain (`prev -> event`) |",
+        "| :---: | :--- | :--- | :--- | :--- | :--- | :--- |",
+    ]
+    if not events:
+        ledger_lines.append("| - | _No audit events logged yet_ | - | - | - | - | - |")
+    else:
+        for ev in events:
+            docs_str = ", ".join(f"`{d}`" for d in ev.get("doc_ids", [])) or "—"
+            roles_str = ", ".join(ev.get("actor_roles", [])) or "—"
+            h_str = f"`{ev.get('prev_hash', '')[:8]}→{ev.get('event_hash', '')[:8]}`"
+            ledger_lines.append(
+                f"| {ev.get('seq')} | `{ev.get('event_type')}` | `{ev.get('actor_tenant')}` | "
+                f"`{roles_str}` | {docs_str} | {ev.get('summary', '')} | {h_str} |"
+            )
+
+    return dossier_md, "\n".join(trace_lines), "\n".join(ledger_lines), prom_text
+
+
+def handle_gdpr_erasure(doc_id: str) -> Tuple[str, str, str, str, str]:
+    """Executes GDPR Article 17 deletion via DELETE /documents/{doc_id} and refreshes the Audit Center."""
+    cleaned_id = (doc_id or "").strip()
+    if not cleaned_id:
+        dossier, traces, ledger, prom = fetch_compliance_audit_dashboard()
+        return "⚠️ Please enter a `doc_id` from the Active Corpus table above.", dossier, traces, ledger, prom
+
+    try:
+        resp = requests.delete(f"{BACKEND_URL}/documents/{cleaned_id}", timeout=15)
+        resp.raise_for_status()
+        res = resp.json()
+        status_msg = (
+            f"✅ **GDPR Article 17 Erasure Complete:** `{res.get('doc_id')}` "
+            f"(`chunks_deleted={res.get('chunks_deleted')}`, `cache_evicted={res.get('cache_entries_evicted')}`, "
+            f"`audit_hash={str(res.get('audit_event_hash', ''))[:12]}...`)"
+        )
+    except Exception as exc:
+        status_msg = f"❌ Erasure failed: {exc}"
+
+    dossier, traces, ledger, prom = fetch_compliance_audit_dashboard()
+    return status_msg, dossier, traces, ledger, prom
+
+
 # --- UI Formatting Helpers ---
 
 
@@ -428,6 +512,32 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
                 eval_btn = gr.Button("🧪 Run Full 5-Mode Retrieval Ablation Study", variant="primary")
             eval_output = gr.Markdown(value="_Click 'Run Full 5-Mode Retrieval Ablation Study' to compute metrics._")
 
+        # TAB 4: Compliance Audit & End-to-End Observability Center
+        with gr.TabItem("4. 🛡️ Compliance Audit & Observability Center"):
+            gr.Markdown(
+                "### 🛡️ System Audit, GDPR Article 17 Erasure & Full-Stack Observability\n"
+                "Inspect the **cryptographic SHA-256 audit chain**, **active document RBAC lineage**, "
+                "**Langfuse-compatible distributed traces & spans**, and live **Prometheus** metrics "
+                "(scraped by Grafana at `:3000` in Docker Compose)."
+            )
+            with gr.Row():
+                audit_refresh_btn = gr.Button("🔄 Refresh Audit & Observability Dashboard", variant="primary")
+                erase_doc_input = gr.Textbox(
+                    label="GDPR Article 17 Erasure — Target doc_id",
+                    placeholder="Paste a doc_id from the Active Corpus table (e.g. doc_...)",
+                )
+                erase_btn = gr.Button("🗑️ Erase Document (GDPR Art. 17)", variant="stop")
+            erase_status_md = gr.Markdown(value="_Ready for compliance inspection or GDPR erasure._")
+
+            audit_dossier_md = gr.Markdown(value="_Click 'Refresh Audit & Observability Dashboard' to load the compliance dossier._")
+            audit_traces_md = gr.Markdown(value="_Distributed trace waterfall will appear here._")
+            audit_ledger_md = gr.Markdown(value="_Tamper-evident SHA-256 audit ledger will appear here._")
+            prom_metrics_code = gr.Code(
+                label="Live Prometheus Exposition (/metrics/prometheus)",
+                language="shell",
+                value="# Click 'Refresh Audit & Observability Dashboard' to inspect live Prometheus metrics.",
+            )
+
     # Event Wiring
     ingest_btn.click(
         ingest_document,
@@ -454,6 +564,19 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
     )
     check_btn.click(check_status, inputs=job_id_state, outputs=[final_output, trace_output])
     eval_btn.click(handle_run_evaluation, inputs=[eval_top_k], outputs=eval_output)
+    audit_refresh_btn.click(
+        fetch_compliance_audit_dashboard,
+        inputs=[],
+        outputs=[audit_dossier_md, audit_traces_md, audit_ledger_md, prom_metrics_code],
+    )
+    erase_btn.click(
+        handle_gdpr_erasure,
+        inputs=[erase_doc_input],
+        outputs=[erase_status_md, audit_dossier_md, audit_traces_md, audit_ledger_md, prom_metrics_code],
+    )
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=int(os.getenv("GRADIO_SERVER_PORT", "7860")),
+    )

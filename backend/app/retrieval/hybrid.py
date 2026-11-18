@@ -455,6 +455,37 @@ class HybridRetrievalEngine:
                 "entity_graph": entity_graph.stats(),
             }
 
+    def list_documents(self) -> List[Dict[str, object]]:
+        """Aggregates indexed chunks by doc_id for the Compliance & Document Inventory API."""
+        with self._lock:
+            grouped: Dict[str, Dict[str, object]] = {}
+            for cid in self._chunk_order:
+                chk = self._chunks_by_id[cid]
+                if chk.doc_id not in grouped:
+                    grouped[chk.doc_id] = {
+                        "doc_id": chk.doc_id,
+                        "title": chk.title,
+                        "source": chk.source,
+                        "tenant_id": chk.tenant_id,
+                        "access_roles": list(chk.access_roles),
+                        "chunk_count": 0,
+                        "parent_ids": set(),
+                        "sample_chunk_ids": [],
+                    }
+                entry = grouped[chk.doc_id]
+                entry["chunk_count"] = int(entry["chunk_count"]) + 1  # type: ignore[arg-type]
+                entry["parent_ids"].add(chk.parent_id)  # type: ignore[attr-defined]
+                sample_list: List[str] = entry["sample_chunk_ids"]  # type: ignore[assignment]
+                if len(sample_list) < 3:
+                    sample_list.append(chk.chunk_id)
+
+            documents: List[Dict[str, object]] = []
+            for doc in grouped.values():
+                parent_ids = doc.pop("parent_ids")
+                doc["parent_windows_count"] = len(parent_ids)  # type: ignore[arg-type]
+                documents.append(doc)
+            return documents
+
     def clear(self) -> None:
         with self._lock:
             self._chunks_by_id.clear()

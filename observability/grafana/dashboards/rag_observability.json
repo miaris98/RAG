@@ -1,0 +1,86 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "RAG Query Latency Percentiles (p50 / p95 / p99)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rag_latency_ms_p50", "legendFormat": "p50 (ms)", "refId": "A" },
+        { "expr": "rag_latency_ms_p95", "legendFormat": "p95 (ms)", "refId": "B" },
+        { "expr": "rag_latency_ms_p99", "legendFormat": "p99 (ms)", "refId": "C" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "title": "Queries, Cache Hits, Guardrails & GDPR Erasures",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rag_queries_total", "legendFormat": "Total Queries", "refId": "A" },
+        { "expr": "rag_cache_hits_total", "legendFormat": "Semantic Cache Hits", "refId": "B" },
+        { "expr": "rag_guardrail_triggers_total", "legendFormat": "Guardrail Triggers", "refId": "C" },
+        { "expr": "rag_gdpr_erasures_total", "legendFormat": "GDPR Erasures", "refId": "D" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 8 },
+      "id": 3,
+      "title": "Active Corpus Documents & Chunks",
+      "type": "stat",
+      "targets": [
+        { "expr": "rag_corpus_documents_total", "legendFormat": "Documents", "refId": "A" },
+        { "expr": "rag_corpus_chunks_total", "legendFormat": "Chunks", "refId": "B" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "color": "red", "text": "TAMPERED" }, "1": { "color": "green", "text": "VALID" } }, "type": "value" }
+          ]
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 8 },
+      "id": 4,
+      "title": "SHA-256 Audit Chain Integrity",
+      "type": "stat",
+      "targets": [
+        { "expr": "rag_audit_chain_valid", "legendFormat": "Chain Status", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 8 },
+      "id": 5,
+      "title": "Circuit Breakers Open (0=Healthy, 1=OPEN)",
+      "type": "stat",
+      "targets": [
+        { "expr": "rag_circuit_breaker_open", "legendFormat": "{{service}}", "refId": "A" }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["rag", "observability", "gdpr"],
+  "time": { "from": "now-15m", "to": "now" },
+  "title": "Staff+ RAG Observability & Audit Dashboard",
+  "uid": "staff-rag-observability",
+  "version": 1
+}

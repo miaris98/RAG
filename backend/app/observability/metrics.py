@@ -119,6 +119,67 @@ class MetricsCollector:
                 },
             }
 
+    def format_prometheus(
+        self,
+        corpus_stats: Dict[str, object],
+        chain_valid: bool,
+        trace_stats: Dict[str, object],
+    ) -> str:
+        """Renders operational, latency, corpus, audit-chain, and circuit-breaker metrics in Prometheus text format."""
+        snap = self.snapshot()
+        lat = snap["latency_ms"]  # type: ignore[index]
+        cbs = snap["circuit_breakers"]  # type: ignore[index]
+        llm_open = 1 if cbs["ollama_llm"]["state"] == "OPEN" else 0  # type: ignore[index]
+        web_open = 1 if cbs["duckduckgo_web"]["state"] == "OPEN" else 0  # type: ignore[index]
+
+        with self._lock:
+            lines = [
+                "# HELP rag_queries_total Total number of RAG queries executed.",
+                "# TYPE rag_queries_total counter",
+                f"rag_queries_total {self.total_queries}",
+                "# HELP rag_cache_hits_total Total number of semantic/sidecar cache hits.",
+                "# TYPE rag_cache_hits_total counter",
+                f"rag_cache_hits_total {self.cache_hits}",
+                "# HELP rag_crag_fallbacks_total Total number of CRAG external web fallback triggers.",
+                "# TYPE rag_crag_fallbacks_total counter",
+                f"rag_crag_fallbacks_total {self.crag_fallbacks}",
+                "# HELP rag_self_rag_retries_total Total cyclic Self-RAG retry loops triggered.",
+                "# TYPE rag_self_rag_retries_total counter",
+                f"rag_self_rag_retries_total {self.self_rag_retries}",
+                "# HELP rag_guardrail_triggers_total Total security guardrail triggers (PII / prompt injection).",
+                "# TYPE rag_guardrail_triggers_total counter",
+                f"rag_guardrail_triggers_total {self.guardrail_triggers}",
+                "# HELP rag_gdpr_erasures_total Total GDPR Article 17 surgical document erasures.",
+                "# TYPE rag_gdpr_erasures_total counter",
+                f"rag_gdpr_erasures_total {self.gdpr_erasures}",
+                "# HELP rag_latency_ms_p50 Rolling 50th percentile query latency in milliseconds.",
+                "# TYPE rag_latency_ms_p50 gauge",
+                f"rag_latency_ms_p50 {lat['p50']}",  # type: ignore[index]
+                "# HELP rag_latency_ms_p95 Rolling 95th percentile query latency in milliseconds.",
+                "# TYPE rag_latency_ms_p95 gauge",
+                f"rag_latency_ms_p95 {lat['p95']}",  # type: ignore[index]
+                "# HELP rag_latency_ms_p99 Rolling 99th percentile query latency in milliseconds.",
+                "# TYPE rag_latency_ms_p99 gauge",
+                f"rag_latency_ms_p99 {lat['p99']}",  # type: ignore[index]
+                "# HELP rag_corpus_documents_total Active documents indexed in the RAG corpus.",
+                "# TYPE rag_corpus_documents_total gauge",
+                f"rag_corpus_documents_total {corpus_stats.get('total_documents', 0)}",
+                "# HELP rag_corpus_chunks_total Active child chunks indexed across dense, BM25, and graph stores.",
+                "# TYPE rag_corpus_chunks_total gauge",
+                f"rag_corpus_chunks_total {corpus_stats.get('total_chunks', 0)}",
+                "# HELP rag_traces_total Total distributed Langfuse-compatible traces stored.",
+                "# TYPE rag_traces_total gauge",
+                f"rag_traces_total {trace_stats.get('total_traces', 0)}",
+                "# HELP rag_audit_chain_valid Cryptographic SHA-256 audit log chain integrity (1=valid, 0=tampered).",
+                "# TYPE rag_audit_chain_valid gauge",
+                f"rag_audit_chain_valid {1 if chain_valid else 0}",
+                "# HELP rag_circuit_breaker_open Circuit breaker state per downstream service (1=OPEN, 0=CLOSED/HALF_OPEN).",
+                "# TYPE rag_circuit_breaker_open gauge",
+                f'rag_circuit_breaker_open{{service="ollama_llm"}} {llm_open}',
+                f'rag_circuit_breaker_open{{service="duckduckgo_web"}} {web_open}',
+            ]
+        return "\n".join(lines) + "\n"
+
 
 llm_circuit_breaker = CircuitBreaker(name="ollama_llm", failure_threshold=2, recovery_timeout_sec=30.0)
 web_circuit_breaker = CircuitBreaker(name="duckduckgo_web", failure_threshold=3, recovery_timeout_sec=30.0)
