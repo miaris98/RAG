@@ -1,137 +1,150 @@
-# 🏗️ Staff+ / Principal RAG Engineering Platform
+# 🏗️ Staff+ / Principal RAG Engineering Platform — Interview Showcase & Live Demo Guide
 
-An interview-ready, production-grade **Retrieval-Augmented Generation (RAG)** microservices platform orchestrated with **Docker Compose**, **FastAPI**, **Milvus**, **RabbitMQ**, **LangGraph**, **Ollama**, and **Gradio**.
+An interview-ready, production-grade **Retrieval-Augmented Generation (RAG)** microservices platform orchestrated with **Docker Compose**, **FastAPI**, **Milvus**, **RabbitMQ**, **LangGraph**, **Ollama**, **Gradio**, **Prometheus**, **Grafana**, and **Langfuse-compatible Distributed Tracing**.
 
-Designed as a **Staff+ / Principal RAG Engineer Showcase**, it implements real-world patterns synthesized from 50+ industry engineering blogs ([`docs/INDUSTRY_RAG_TODO.md`](docs/INDUSTRY_RAG_TODO.md)), including **Pre-Filtered RBAC**, **Tri-Modal GraphRAG**, **Cyclic LangGraph Self-Correction**, **GDPR Article 17 Surgical Erasure**, and a **Tamper-Evident SHA-256 Audit Trail**.
-
-📖 **Interview & Architecture Guides:**
-- [**Staff RAG Interview Guide (`docs/INTERVIEW_GUIDE.md`)**](docs/INTERVIEW_GUIDE.md) — Math formulations (RRF, Cross-Encoder Calibration, NDCG), 6 legacy anti-patterns fixed, and system design Q&A.
-- [**50-Company RAG Tech Blog Study & Roadmap (`docs/INDUSTRY_RAG_TODO.md`)**](docs/INDUSTRY_RAG_TODO.md) — Production lessons from Google, Netflix, Anthropic, Uber, DoorDash, Bloomberg, and more.
+> **Deep-Dive Companion Docs:**
+> - 📖 [**Staff RAG Interview Guide (`docs/INTERVIEW_GUIDE.md`)**](docs/INTERVIEW_GUIDE.md) — Mathematical formulations (RRF, Cross-Encoder Calibration, NDCG@K), 6 prototype anti-patterns fixed, and system design Q&A.
+> - 🌐 [**50-Company RAG Tech Blog Study (`docs/INDUSTRY_RAG_TODO.md`)**](docs/INDUSTRY_RAG_TODO.md) — Production patterns from Google, Netflix, Anthropic, Uber, DoorDash, Bloomberg, Capital One, and more.
 
 ---
 
-## ✨ Key Production Capabilities
+## 🎯 60-Second Interview Elevator Pitch
 
-- **Pre-Filtered Multi-Tenant RBAC (`tenant_id`, `access_roles`):** Enforces role and tenant isolation *before* Dense, Sparse, Graph, and Cross-Encoder scoring—eliminating data leakage and post-filter recall starvation.
-- **Tri-Modal Hybrid Retrieval & Post-Processing:**
-  - **Stage 1 Recall:** Milvus Dense Bi-Encoder (`all-MiniLM-L6-v2`) + Sparse `BM25Okapi` + 1-hop Entity Knowledge Graph fused via **Reciprocal Rank Fusion (`RRF_K = 60`)**.
-  - **Stage 2 Precision:** **Cross-Encoder Reranker (`ms-marco-MiniLM-L-6-v2`)** with sigmoid calibration, negation-polarity adjustment, **Maximal Marginal Relevance (MMR)** diversity selection, and **Lost-in-the-Middle** U-shaped reordering.
-- **Table-Header-Preserving & Parent-Child Chunking:** Indexes fine-grained child chunks (`380` chars) with contextual headers, re-injects Markdown table headers across splits, promotes deduplicated parent windows (`1200` chars), and deduplicates idempotently via SHA-256 chunk IDs.
-- **Cyclic LangGraph (`CRAG` + `Self-RAG`) & Adaptive Query Router:**
-  - Routes queries dynamically (`lexical_lookup`, `conceptual_hyde`, `multi_hop`), resolves multi-turn pronouns via `session_id` memory, gates irrelevant context via CRAG, and loops back to `retrieve_and_rerank` if Self-RAG faithfulness falls below `0.75`.
-  - Streams node transitions live via **Server-Sent Events (`POST /query-stream`)** or processes asynchronously via **RabbitMQ** (`POST /submit-job`, `POST /ingest-async`).
-- **Role-Scoped Semantic Cache & Labeled-Query Sidecar:** Sub-millisecond cache hits scoped by `(tenant_id, user_roles, retrieval_mode)` with automatic `doc_id` invalidation on document updates.
-- **GDPR, Security Guardrails & Tamper-Evident Auditability:**
-  - Redacts PII (emails, SSNs, API keys) and blocks indirect prompt injections on ingestion and query paths.
-  - Supports **GDPR Article 17 Right-to-be-Forgotten** (`DELETE /documents/{doc_id}`) across Dense, BM25, Entity Graph, and Semantic Cache.
-  - Records every action in a **SHA-256 hash-chained immutable audit log** (`GET /audit-logs`), generates an executive **System Audit Dossier** (`GET /compliance/audit-report`), and exposes a dedicated **Tab 4 Compliance Audit & Observability Center** in Gradio.
-- **Full-Stack Observability (Langfuse + Prometheus + Grafana):**
-  - **Langfuse-Compatible Distributed Tracing:** Records hierarchical traces & per-node spans at `GET /traces` and optionally forwards batches to Langfuse when `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` are set.
-  - **Prometheus & Pre-Provisioned Grafana:** Exposes Prometheus metrics at `GET /metrics/prometheus`, scraped automatically by Prometheus (`:9091`) and visualized in Grafana (`:3000`).
-- **MCP Server & CI Eval-Driven Development (EDD):** Exposes RBAC-scoped RAG tools in [`backend/mcp_server.py`](backend/mcp_server.py) and enforces retrieval regression gates in [`.github/workflows/edd.yml`](.github/workflows/edd.yml).
+> *"Instead of a naive dense-only prototype, I built a modular, 100% local **Production RAG Platform** with **Pre-Filtered Multi-Tenant RBAC**, **Table-Aware Parent-Child Chunking** with SHA-256 deduplication, and a **Tri-Modal Hybrid Retrieval Engine** (Milvus Dense + BM25 + 1-hop Entity Knowledge Graph fused via **Reciprocal Rank Fusion**, followed by **Cross-Encoder Reranking**, **MMR Diversity**, and **Lost-in-the-Middle** U-shaped reordering). Orchestration runs on a **cyclic LangGraph StateGraph** implementing **Adaptive Query Routing** (`lexical_lookup`, `conceptual_hyde`, `multi_hop`), **Corrective RAG (CRAG)** gating, and **Self-RAG** faithfulness verification with **structured `[Doc i]` inline citations & supporting quotes**. The system includes **PII & Prompt Injection Guardrails**, **GDPR Article 17 surgical erasure**, a **tamper-evident SHA-256 hash-chained audit ledger**, **hierarchical distributed span waterfalls**, **Prometheus/Grafana**, and an automated **29-test TDD & 5-mode IR Ablation suite**."*
+
+```mermaid
+flowchart LR
+    UI["Gradio 4-Tab Studio\n(:7860)"] --> API["FastAPI Gateway\n(:8000)"]
+    API --> Guard["Guardrails\n(PII + Injection)"]
+    API --> Cache["Semantic Cache\n& Labeled Sidecar"]
+    API --> Graph["Cyclic LangGraph\n(Router -> CRAG -> Self-RAG)"]
+    Graph --> Ret["Tri-Modal Retrieval\n(Milvus + BM25 + Entity Graph\n-> RRF -> Cross-Encoder -> MMR)"]
+    API --> Audit["SHA-256 Audit Ledger\n& GDPR Art. 17 Erasure"]
+    API --> Obs["Distributed Traces\n(Langfuse) & /metrics/prometheus"]
+    Obs --> Prom["Prometheus (:9091)"] --> Graf["Grafana (:3000)"]
+```
 
 ---
 
-## 🏛️ Microservices Architecture
+## 🔗 Quick Links & Service URLs
 
-| Service | Technology | Internal Port | External Port | Role in RAG Pipeline |
-| :--- | :--- | :--- | :--- | :--- |
-| **Gradio Studio** | Gradio | `7860` | **7860** | 4-Tab UI: Ingestion/RBAC, SSE & RabbitMQ Query, 5-Mode Eval, Compliance Audit Center. |
-| **FastAPI Gateway & Worker** | FastAPI + LangGraph | `8000` | **8000** | Modular RAG engine (`backend/app/`), hybrid/graph retriever, guardrails, and worker pool. |
-| **Prometheus** | Prometheus | `9090` | **9091** | Scrapes `GET /metrics/prometheus` every 5s for latencies, cache, guardrails & audit chain. |
-| **Grafana** | Grafana | `3000` | **3000** | Pre-provisioned `Staff+ RAG Observability & Audit Dashboard` (`admin`/`admin`). |
-| **LLM Server** | Ollama (`llama3.1`) | `11434` | **11434** | Local OpenAI-compatible inference endpoint for cited synthesis. |
-| **Vector DB** | Milvus Standalone | `19530` | **19530** | Stores 384-dim dense bi-encoder embeddings with Strong consistency. |
-| **Message Broker** | RabbitMQ | `5672` | **15672** (UI) | Decouples async query & ingestion jobs with automatic local thread fallback. |
-| **Vector Admin UI** | Zilliz Attu | `3000` | **9090** | Visual inspector for Milvus collections, schemas, and entities. |
-| **Object & Meta Storage** | MinIO & Etcd | `9000` / `2379` | Internal | Storage and distributed coordination dependencies for Milvus. |
+| Interface / Endpoint | Local `.venv` URL | Docker Compose URL | Purpose in Demo / Interview |
+| :--- | :--- | :--- | :--- |
+| **Gradio 4-Tab Studio** | [http://127.0.0.1:7860](http://127.0.0.1:7860) | [http://localhost:7860](http://localhost:7860) | Main interactive UI (Ingestion, SSE Query, Ablations, Audit Center) |
+| **FastAPI Swagger UI** | [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) | [http://localhost:8000/docs](http://localhost:8000/docs) | Interactive OpenAPI schema & GDPR deletion endpoint |
+| **Distributed Traces JSON** | [http://127.0.0.1:8000/traces](http://127.0.0.1:8000/traces) | [http://localhost:8000/traces](http://localhost:8000/traces) | Langfuse-compatible parent-child spans & waterfall timings |
+| **Compliance Audit Dossier** | [http://127.0.0.1:8000/compliance/audit-report](http://127.0.0.1:8000/compliance/audit-report) | [http://localhost:8000/compliance/audit-report](http://localhost:8000/compliance/audit-report) | Full JSON + Markdown system audit report |
+| **SHA-256 Audit Ledger** | [http://127.0.0.1:8000/audit-logs](http://127.0.0.1:8000/audit-logs) | [http://localhost:8000/audit-logs](http://localhost:8000/audit-logs) | Tamper-evident hash-chained event history (`chain_valid: true`) |
+| **Prometheus Metrics** | [http://127.0.0.1:8000/metrics/prometheus](http://127.0.0.1:8000/metrics/prometheus) | [http://localhost:8000/metrics/prometheus](http://localhost:8000/metrics/prometheus) | Raw Prometheus exposition (`p50`/`p95`/`p99`, cache, guardrails) |
+| **Grafana Dashboard** | _Docker only_ | [http://localhost:3000](http://localhost:3000) | Pre-provisioned `Staff+ RAG Observability` dashboard (`admin`/`admin`) |
+| **Prometheus UI** | _Docker only_ | [http://localhost:9091](http://localhost:9091) | Live metric scraper targets & PromQL explorer |
+| **Milvus Attu UI** | _Docker only_ | [http://localhost:9090](http://localhost:9090) | Inspect Milvus vector collections & entities |
+| **RabbitMQ Management** | _Docker only_ | [http://localhost:15672](http://localhost:15672) | Inspect `rag_jobs` async queues (`guest`/`guest`) |
+| **MinIO Console** | _Docker only_ | [http://localhost:9001](http://localhost:9001) | Inspect Milvus object storage buckets (`minioadmin`/`minioadmin`) |
+| **Codebase Knowledge Graph** | [graphify-out/graph.html](graphify-out/graph.html) | — | Interactive `graphify` architecture map (`577` nodes, `1,071` edges) |
 
 ---
 
-## 📂 Modular Project Structure
+## 🚀 Step 1: Start the Platform
+
+### Option A — Fast Local Mode (Recommended for Live Coding / Interviews)
+Activate the pre-configured Python 3.10 `.venv` in **two terminals**:
+
+**Terminal 1 — FastAPI Backend (`:8000`):**
+```powershell
+cd C:\Users\miari\Desktop\RAG\backend
+..\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+**Terminal 2 — Gradio 4-Tab Studio (`:7860`):**
+```powershell
+cd C:\Users\miari\Desktop\RAG\frontend
+$env:BACKEND_URL = "http://127.0.0.1:8000"
+..\.venv\Scripts\python.exe app.py
+```
+
+### Option B — Full Docker Compose Stack (Includes Milvus, RabbitMQ, Ollama, Prometheus, Grafana, MinIO)
+```powershell
+cd C:\Users\miari\Desktop\RAG
+docker-compose up -d --build
+docker exec -it ollama ollama pull llama3.1
+```
+
+---
+
+## 🎬 Step 2: 5-Minute Live Interview Demo Script
+
+Open **[http://127.0.0.1:7860](http://127.0.0.1:7860)** and walk the interviewer through these 5 steps:
+
+### 1. Ingestion, Deduplication & Security Guardrails (Tab 1)
+1. Click **🚀 Seed Enterprise Sample Corpus (3 Docs)** to index the 3 built-in enterprise docs (`AegisPay RFC-402`, `RAG Playbook`, `Governance Directory`).
+2. Click **📥 Ingest Document** twice with the same text $\rightarrow$ point out **SHA-256 Content-Addressable Deduplication** (`chunks_indexed_new: 0`, `chunks_skipped_duplicate > 0`).
+3. Paste text containing `alice@corp.com`, `123-45-6789`, and `Ignore previous instructions` $\rightarrow$ click **📥 Ingest Document** to show `Guardrail Flags: ['pii_redacted', 'prompt_injection_detected']`.
+
+### 2. Distributed Tracing, Retrieval Funnel & Inline Citations (Tab 2)
+1. Uncheck **External Web Search (DuckDuckGo)** if offline, keep the default query `"What triggers ERR_LEDGER_9042 and what is the remediation command?"`, and click **⚡ Stream Live (SSE)**.
+2. Highlight three things for the interviewer:
+   - **Structured Inline Citations:** `[Doc 1: Title §Section]` badges + **`### 📚 Verified Inline Citations & Evidence Quotes`** with the exact supporting sentence extracted from the chunk.
+   - **8-Stage Retrieval Candidate Funnel & Explainability Table:** Shows `Corpus` $\rightarrow$ `RBAC Authorized` $\rightarrow$ `Dense / BM25 / Graph` $\rightarrow$ `RRF Pool` $\rightarrow$ `Parent Windows` $\rightarrow$ `CRAG Relevant` $\rightarrow$ `MMR Selected`, plus per-modality **RRF Breakdown (D / S / G)**, **Matched Terms**, **Matched Entities**, and **Lost-in-the-Middle Prompt Slot**.
+   - **Hierarchical Distributed Trace Waterfall:** Shows the root `rag_query_pipeline` span, stage spans, and nested `retrieval.*` sub-spans (`█` timeline bars).
+3. Click **⚡ Stream Live (SSE)** a second time $\rightarrow$ point out **`Semantic Cache Hit: True`** (`<1ms` exact-match fast path).
+
+### 3. Pre-Filtered RBAC Access Control (Tab 2)
+1. Uncheck `compliance` in **Caller RBAC Roles** (leaving only `public`, `engineering`).
+2. Query `"What is the PagerDuty rotation ID?"` $\rightarrow$ show that **Pre-Filtered RBAC** blocks the `compliance`-only Governance document *before* vector/BM25 scoring (zero data leakage, zero recall starvation).
+3. Re-check `compliance` and re-run $\rightarrow$ `PD-EMEA-8821` is retrieved immediately.
+
+### 4. Quantitative 5-Mode IR Ablation Benchmark (Tab 3)
+1. Click **🧪 Run Full 5-Mode Retrieval Ablation Study**.
+2. Walk through the live Markdown table comparing **Dense Only**, **Sparse (BM25)**, **Hybrid RRF (`k=60`)**, **Hybrid + Cross-Encoder**, and **Tri-Modal GraphRAG** across `HitRate@3`, `MRR@3`, `NDCG@3`, `Context Precision@3`, and `Mean Latency (ms)`.
+
+### 5. Compliance Audit Center & GDPR Article 17 Erasure (Tab 4)
+1. Open **Tab 4 (`4. 🛡️ Compliance Audit & Observability Center`)** and click **🔄 Refresh Audit & Observability Dashboard**.
+2. Show the **Executive Compliance Dossier** (`SHA-256 Audit Chain Integrity: VALID`), **Active Corpus & RBAC Lineage**, **Latest Trace Hierarchical Span Waterfall**, **Tamper-Evident SHA-256 Audit Ledger**, and **Live Prometheus `/metrics/prometheus` exposition**.
+3. Copy any `doc_id` from the Active Corpus table into **GDPR Article 17 Erasure — Target doc_id** and click **🗑️ Erase Document (GDPR Art. 17)** $\rightarrow$ verify the document is surgically deleted across Dense, BM25, Entity Graph, and Semantic Cache, with an immutable `gdpr_article17_erasure` event appended to the SHA-256 hash chain.
+
+---
+
+## 🧪 Step 3: Run Automated Tests (`29` TDD, Security & GDPR Tests)
+
+```powershell
+cd C:\Users\miari\Desktop\RAG
+.\.venv\Scripts\Activate.ps1
+$env:PYTHONPATH = "$PWD\backend"
+pytest backend/tests/ -v
+python backend/debug.py
+```
+
+---
+
+## 📂 Modular Repository Structure
 
 ```text
 RAG/
 ├── .github/workflows/edd.yml      # CI Eval-Driven Development (pytest + 5-mode ablation gate)
+├── observability/
+│   ├── prometheus.yml             # Scrapes fastapi-backend:8000/metrics/prometheus every 5s
+│   └── grafana/                   # Pre-provisioned Prometheus datasource & RAG dashboard
 ├── backend/
 │   ├── app/
-│   │   ├── config.py              # Environment-backed settings (Ollama, Milvus, RabbitMQ, thresholds)
-│   │   ├── models.py              # Pydantic contracts (RBAC, GDPR metadata, PipelineTrace, Eval)
-│   │   ├── ingestion/
-│   │   │   ├── chunking.py        # Parent-Child, Table-Header preservation & SHA-256 deduplication
-│   │   │   └── pipeline.py        # Idempotent ingestion + cache invalidation + GDPR audit logging
-│   │   ├── retrieval/
-│   │   │   ├── embeddings.py      # Thread-safe singleton registry (Bi-Encoder, Cross-Encoder, LLM)
-│   │   │   ├── entity_graph.py    # 1-hop Entity Knowledge Graph for Tri-Modal GraphRAG
-│   │   │   ├── hybrid.py          # Pre-Filtered RBAC + Dense + BM25 + Graph RRF + GDPR erasure
-│   │   │   ├── reranker.py        # Cross-Encoder (ms-marco-MiniLM-L-6-v2) + Sigmoid Calibration
-│   │   │   ├── postprocessor.py   # MMR diversity, negation adjustment & Lost-in-the-Middle reorder
-│   │   │   ├── semantic_cache.py  # Role-scoped Semantic Query Cache with doc_id invalidation
-│   │   │   └── labeled_queries.py # Vetted Golden QA sidecar cache
-│   │   ├── agent/
-│   │   │   ├── state.py           # Typed LangGraph state (routing, retries, critiques, telemetry)
-│   │   │   ├── nodes.py           # Adaptive Router, CRAG gate, Circuit-Broken Web/LLM, Self-RAG
-│   │   │   └── graph.py           # Cyclic LangGraph StateGraph + SSE streaming generator
-│   │   ├── guardrails/
-│   │   │   ├── security.py        # PII redaction & indirect prompt injection defense
-│   │   │   └── audit.py           # Tamper-evident SHA-256 hash-chained audit trail
-│   │   ├── memory/
-│   │   │   └── conversation.py    # Multi-turn session memory & pronoun coreference resolution
-│   │   ├── observability/
-│   │   │   └── metrics.py         # Circuit Breakers + rolling p50/p95/p99 latency & counter metrics
-│   │   ├── evaluation/
-│   │   │   ├── metrics.py         # HitRate@K, MRR@K, NDCG@K, ContextPrecision@K
-│   │   │   └── benchmark.py       # 5-Mode Golden Technical QA Ablation Benchmark
-│   │   └── worker/
-│   │       └── consumer.py        # Async RabbitMQ query & ingestion workers with thread fallback
+│   │   ├── config.py              # Environment-backed settings
+│   │   ├── models.py              # Pydantic contracts (RBAC, CitationItem, PipelineTrace, Eval)
+│   │   ├── ingestion/             # Table-aware Parent-Child chunking & SHA-256 dedup pipeline
+│   │   ├── retrieval/             # Singleton models, Entity Graph, Hybrid RRF, Reranker, MMR, Cache
+│   │   ├── agent/                 # Cyclic LangGraph StateGraph (Router -> CRAG -> Self-RAG + Citations)
+│   │   ├── guardrails/            # PII & Injection Guardrails + SHA-256 Tamper-Evident Audit Trail
+│   │   ├── memory/                # Multi-turn session memory & pronoun coreference resolution
+│   │   ├── observability/         # Langfuse-compatible TraceCollector + Prometheus + Circuit Breakers
+│   │   ├── evaluation/            # HitRate@K, MRR@K, NDCG@K & 5-Mode Ablation Benchmark
+│   │   └── worker/                # RabbitMQ async query & ingestion workers with thread fallback
 │   ├── mcp_server.py              # RBAC-scoped MCP server (retrieve, ingest, GDPR erase)
-│   ├── main.py                    # FastAPI gateway (/ingest, /query-stream, /documents/{id}, /metrics, /audit-logs)
+│   ├── main.py                    # FastAPI gateway
 │   ├── debug.py                   # CLI diagnostic & ablation inspector
-│   ├── tests/                     # 23 automated TDD unit, integration, GDPR & OWASP security tests
-│   └── Dockerfile
+│   └── tests/                     # 29 automated TDD unit, integration, GDPR & OWASP security tests
 ├── frontend/
-│   ├── app.py                     # 3-Tab Gradio Studio (Ingestion/RBAC, SSE Query, 5-Mode Eval)
-│   ├── requirements.txt           # Lightweight UI dependencies (gradio, huggingface_hub<1.0, requests, pypdf)
-│   └── Dockerfile
+│   └── app.py                     # 4-Tab Gradio Observability, Eval & Compliance Audit Studio
 ├── docs/
 │   ├── INTERVIEW_GUIDE.md
 │   └── INDUSTRY_RAG_TODO.md
 └── docker-compose.yml
-```
-
----
-
-## 🚀 Quick Start (Docker Compose)
-
-### 1. Build and Launch All Containers
-```bash
-docker-compose up -d --build
-```
-
-### 2. Pull the Local LLM inside Ollama
-```bash
-docker exec -it ollama ollama pull llama3.1
-```
-
-### 3. Access the Interfaces
-- **Gradio Studio UI (4 Tabs incl. Audit Center):** [http://localhost:7860](http://localhost:7860)
-- **FastAPI Swagger Docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
-- **Grafana Observability Dashboard:** [http://localhost:3000](http://localhost:3000) (`admin` / `admin`)
-- **Prometheus Targets & Queries:** [http://localhost:9091](http://localhost:9091)
-- **Compliance Audit Dossier (`JSON` + `Markdown`):** [http://localhost:8000/compliance/audit-report](http://localhost:8000/compliance/audit-report)
-- **Distributed Traces (`Langfuse`-compatible):** [http://localhost:8000/traces](http://localhost:8000/traces)
-- **Prometheus Exposition:** [http://localhost:8000/metrics/prometheus](http://localhost:8000/metrics/prometheus)
-- **Tamper-Evident Audit Logs:** [http://localhost:8000/audit-logs](http://localhost:8000/audit-logs)
-- **RabbitMQ Management UI:** [http://localhost:15672](http://localhost:15672) (`guest` / `guest`)
-- **MinIO Object Storage Console:** [http://localhost:9001](http://localhost:9001) (`minioadmin` / `minioadmin`)
-- **Attu Milvus UI:** [http://localhost:9090](http://localhost:9090)
-
----
-
-## 🧪 Running Tests & Diagnostics Locally
-
-```bash
-$env:PYTHONPATH = "$PWD\backend"
-uv run --with fastapi --with pydantic --with pytest --with httpx --with rank-bm25 pytest backend/tests/ -v
-uv run --with fastapi --with pydantic --with rank-bm25 python backend/debug.py
 ```
