@@ -10,12 +10,13 @@
 import math
 import socket
 import threading
-from typing import Dict, List, Optional, Set, Tuple
+import time
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from app.config import settings
 from app.models import ChunkRecord, RetrievalMode, RetrievedChunk
 from app.retrieval.embeddings import ModelRegistry
-from app.retrieval.entity_graph import entity_graph
+from app.retrieval.entity_graph import entity_graph, extract_entities
 from app.retrieval.postprocessor import context_postprocessor
 from app.retrieval.reranker import CrossEncoderReranker, tokenize_content_words
 
@@ -86,6 +87,12 @@ class HybridRetrievalEngine:
         self._reranker = CrossEncoderReranker(relevance_threshold=settings.relevance_threshold)
         self._milvus_connected: bool = False
         self._milvus_hydrated: bool = False
+        self._last_funnel: Dict[str, Any] = {}
+
+    def get_last_funnel(self) -> Dict[str, Any]:
+        """Returns the retrieval candidate funnel and substage timing telemetry from the most recent retrieve()."""
+        with self._lock:
+            return dict(self._last_funnel)
 
     def add_chunks(self, chunks: List[ChunkRecord]) -> Tuple[int, int]:
         """Idempotently indexes chunks into the local registry, BM25, Entity Graph, and Milvus."""
@@ -266,11 +273,43 @@ class HybridRetrievalEngine:
         self._hydrate_from_milvus_if_empty()
 
         with self._lock:
+            substage_latencies: Dict[str, float] = {}
+            total_corpus = len(self._chunk_order)
             if not self._chunk_order:
+                self._last_funnel = {
+                    "total_corpus_chunks": 0,
+                    "rbac_authorized_chunks": 0,
+                    "dense_candidates_count": 0,
+                    "sparse_candidates_count": 0,
+                    "graph_candidates_count": 0,
+                    "rrf_fused_pool_count": 0,
+                    "parent_promoted_count": 0,
+                    "reranked_pool_count": 0,
+                    "crag_relevant_count": 0,
+                    "mmr_selected_count": 0,
+                    "pruned_chunks": [],
+                    "substage_latencies_ms": {},
+                }
                 return []
 
+            t_rbac = time.perf_counter()
             authorized_ids = self._authorized_chunk_ids(tenant_id, user_roles)
+            substage_latencies["rbac_prefilter_ms"] = round((time.perf_counter() - t_rbac) * 1000.0, 3)
             if not authorized_ids:
+                self._last_funnel = {
+                    "total_corpus_chunks": total_corpus,
+                    "rbac_authorized_chunks": 0,
+                    "dense_candidates_count": 0,
+                    "sparse_candidates_count": 0,
+                    "graph_candidates_count": 0,
+                    "rrf_fused_pool_count": 0,
+                    "parent_promoted_count": 0,
+                    "reranked_pool_count": 0,
+                    "crag_relevant_count": 0,
+                    "mmr_selected_count": 0,
+                    "pruned_chunks": [],
+                    "substage_latencies_ms": substage_latencies,
+                }
                 return []
 
             clean_queries = [q.strip() for q in queries if q and q.strip()]
@@ -278,7 +317,16 @@ class HybridRetrievalEngine:
                 return []
             primary_query = clean_queries[0]
 
+            query_terms_set = set(tokenize_content_words(" ".join(clean_queries)))
+            query_entities_set = set()
+            for q in clean_queries:
+                query_entities_set.update(extract_entities(q))
+                for tok in tokenize_content_words(q):
+                    if "_" in tok or "-" in tok:
+                        query_entities_set.add(tok)
+
             # 1. Dense Bi-Encoder Rankings (Pre-Filtered to authorized_ids)
+            t_dense = time.perf_counter()
             dense_ranks_per_chunk: Dict[str, int] = {}
             dense_scores_per_chunk: Dict[str, float] = {}
             if mode in ("dense", "hybrid_rrf", "hybrid_rerank", "hybrid_graph_rerank"):
@@ -296,8 +344,10 @@ class HybridRetrievalEngine:
                             dense_ranks_per_chunk[cid] = rank_idx
                         if cid not in dense_scores_per_chunk or sim > dense_scores_per_chunk[cid]:
                             dense_scores_per_chunk[cid] = sim
+            substage_latencies["dense_search_ms"] = round((time.perf_counter() - t_dense) * 1000.0, 3)
 
             # 2. Sparse BM25 Rankings (Pre-Filtered to authorized_ids)
+            t_bm25 = time.perf_counter()
             sparse_ranks_per_chunk: Dict[str, int] = {}
             sparse_scores_per_chunk: Dict[str, float] = {}
             if mode in ("sparse", "hybrid_rrf", "hybrid_rerank", "hybrid_graph_rerank") and self._bm25 is not None:
@@ -317,8 +367,10 @@ class HybridRetrievalEngine:
                             sparse_ranks_per_chunk[cid] = rank_idx
                         if cid not in sparse_scores_per_chunk or b_score > sparse_scores_per_chunk[cid]:
                             sparse_scores_per_chunk[cid] = b_score
+            substage_latencies["bm25_search_ms"] = round((time.perf_counter() - t_bm25) * 1000.0, 3)
 
             # 3. Entity Knowledge Graph 1-Hop Expansion (for Tri-Modal GraphRAG)
+            t_graph = time.perf_counter()
             graph_ranks_per_chunk: Dict[str, int] = {}
             graph_scores_per_chunk: Dict[str, float] = {}
             if mode == "hybrid_graph_rerank":
@@ -330,8 +382,10 @@ class HybridRetrievalEngine:
                 for rank_idx, (cid, g_score) in enumerate(graph_hits, start=1):
                     graph_ranks_per_chunk[cid] = rank_idx
                     graph_scores_per_chunk[cid] = g_score
+            substage_latencies["entity_graph_ms"] = round((time.perf_counter() - t_graph) * 1000.0, 3)
 
             # 4. Reciprocal Rank Fusion (RRF)
+            t_rrf = time.perf_counter()
             candidate_ids = (
                 set(dense_ranks_per_chunk.keys())
                 | set(sparse_ranks_per_chunk.keys())
@@ -351,18 +405,10 @@ class HybridRetrievalEngine:
                 g_rank = graph_ranks_per_chunk.get(cid)
                 g_score = graph_scores_per_chunk.get(cid)
 
-                rrf_val = 0.0
-                if mode == "dense" and d_rank is not None:
-                    rrf_val = dense_weight / (rrf_k + d_rank)
-                elif mode == "sparse" and s_rank is not None:
-                    rrf_val = sparse_weight / (rrf_k + s_rank)
-                else:
-                    if d_rank is not None:
-                        rrf_val += dense_weight / (rrf_k + d_rank)
-                    if s_rank is not None:
-                        rrf_val += sparse_weight / (rrf_k + s_rank)
-                    if g_rank is not None:
-                        rrf_val += graph_weight / (rrf_k + g_rank)
+                d_rrf = (dense_weight / (rrf_k + d_rank)) if (d_rank is not None and mode != "sparse") else 0.0
+                s_rrf = (sparse_weight / (rrf_k + s_rank)) if (s_rank is not None and mode != "dense") else 0.0
+                g_rrf = (graph_weight / (rrf_k + g_rank)) if (g_rank is not None and mode == "hybrid_graph_rerank") else 0.0
+                rrf_val = d_rrf + s_rrf + g_rrf
 
                 initial_prob = 0.0
                 if d_score is not None and s_score is not None:
@@ -371,6 +417,11 @@ class HybridRetrievalEngine:
                     initial_prob = max(0.0, min(0.95, d_score))
                 elif s_score is not None:
                     initial_prob = max(0.0, min(0.95, s_score / 8.0))
+
+                chunk_terms = set(tokenize_content_words(record.parent_content))
+                matched_terms = sorted(query_terms_set & chunk_terms)
+                chunk_entities = set(record.entities or extract_entities(record.parent_content))
+                matched_entities = sorted(query_entities_set & chunk_entities)
 
                 candidates.append(
                     RetrievedChunk(
@@ -393,9 +444,17 @@ class HybridRetrievalEngine:
                         rrf_score=round(rrf_val, 6),
                         calibrated_prob=round(initial_prob, 4),
                         is_relevant=initial_prob >= settings.relevance_threshold,
+                        matched_terms=matched_terms,
+                        matched_entities=matched_entities,
+                        rrf_breakdown={
+                            "dense": round(d_rrf, 6),
+                            "sparse": round(s_rrf, 6),
+                            "graph": round(g_rrf, 6),
+                        },
                     )
                 )
 
+            raw_candidates_count = len(candidates)
             candidates.sort(
                 key=lambda c: (c.rrf_score, c.dense_score or 0.0, c.sparse_score or 0.0),
                 reverse=True,
@@ -416,15 +475,68 @@ class HybridRetrievalEngine:
                     key=lambda c: (c.rrf_score, c.dense_score or 0.0, c.sparse_score or 0.0),
                     reverse=True,
                 )
+            deduped_candidates_count = len(candidates)
+            substage_latencies["rrf_and_parent_promotion_ms"] = round((time.perf_counter() - t_rrf) * 1000.0, 3)
 
             # 6. Stage 2: Cross-Encoder Reranking + Negation Adjustment + MMR Diversity
+            t_rerank = time.perf_counter()
+            pruned_chunks: List[Dict[str, Any]] = []
             if mode in ("hybrid_rerank", "hybrid_graph_rerank"):
                 pool = candidates[: max(top_k * 3, 12)]
                 reranked = self._reranker.rerank(primary_query, pool, top_k=max(top_k * 2, top_k))
                 reranked = context_postprocessor.apply_negation_adjustment(primary_query, reranked)
-                return context_postprocessor.select_mmr(reranked, top_k=top_k)
+                final_chunks = context_postprocessor.select_mmr(reranked, top_k=top_k)
+                selected_ids = {c.chunk_id for c in final_chunks}
+                for cand in reranked:
+                    if not cand.is_relevant:
+                        pruned_chunks.append(
+                            {
+                                "chunk_id": cand.chunk_id,
+                                "title": cand.title,
+                                "calibrated_prob": cand.calibrated_prob,
+                                "reason": "crag_below_threshold",
+                            }
+                        )
+                    elif cand.chunk_id not in selected_ids:
+                        pruned_chunks.append(
+                            {
+                                "chunk_id": cand.chunk_id,
+                                "title": cand.title,
+                                "calibrated_prob": cand.calibrated_prob,
+                                "reason": "mmr_diversity_filtered",
+                            }
+                        )
+            else:
+                pool = candidates
+                final_chunks = candidates[:top_k]
+                for cand in final_chunks:
+                    if not cand.is_relevant:
+                        pruned_chunks.append(
+                            {
+                                "chunk_id": cand.chunk_id,
+                                "title": cand.title,
+                                "calibrated_prob": cand.calibrated_prob,
+                                "reason": "below_threshold",
+                            }
+                        )
+            substage_latencies["cross_encoder_and_mmr_ms"] = round((time.perf_counter() - t_rerank) * 1000.0, 3)
 
-            return candidates[:top_k]
+            self._last_funnel = {
+                "total_corpus_chunks": total_corpus,
+                "rbac_authorized_chunks": len(authorized_ids),
+                "dense_candidates_count": len(dense_ranks_per_chunk),
+                "sparse_candidates_count": len(sparse_ranks_per_chunk),
+                "graph_candidates_count": len(graph_ranks_per_chunk),
+                "rrf_fused_pool_count": raw_candidates_count,
+                "parent_promoted_count": deduped_candidates_count,
+                "reranked_pool_count": len(pool),
+                "crag_relevant_count": sum(1 for c in final_chunks if c.is_relevant),
+                "mmr_selected_count": len(final_chunks),
+                "pruned_chunks": pruned_chunks[:5],
+                "substage_latencies_ms": substage_latencies,
+            }
+
+            return final_chunks
 
     def delete_by_doc_id(self, doc_id: str) -> int:
         """GDPR Article 17 Surgical Erasure: removes all chunks of doc_id across Dense, BM25, and Entity Graph."""

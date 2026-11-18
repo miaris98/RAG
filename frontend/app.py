@@ -146,6 +146,15 @@ def fetch_compliance_audit_dashboard() -> Tuple[str, str, str, str]:
                 f"`{tr.get('cache_hit')}` | `{tr.get('faithfulness_score', 0.0):.2f}` | "
                 f"`{tr.get('total_latency_ms', 0.0):.2f} ms` | {spans_str} | `{tr.get('langfuse_status')}` |"
             )
+        latest_waterfall = traces[0].get("waterfall_markdown")
+        if latest_waterfall:
+            trace_lines.extend(
+                [
+                    "",
+                    f"#### ⏱️ Latest Trace Hierarchical Span Waterfall (`{traces[0].get('trace_id')}`)",
+                    latest_waterfall,
+                ]
+            )
 
     # Format SHA-256 Tamper-Evident Audit Ledger
     events = report.get("audit_events") or []
@@ -203,37 +212,77 @@ def format_pipeline_trace_markdown(trace: Optional[Dict[str, Any]], tools: list)
     latencies = trace.get("stage_latencies_ms") or {}
     latency_badges = " · ".join(f"`{k}: {v} ms`" for k, v in latencies.items())
     guard_flags = trace.get("guardrail_flags") or []
+    funnel = trace.get("retrieval_funnel") or {}
 
     lines = [
-        "### 🔬 Pipeline Observability & Staff+ Telemetry",
-        f"- **Query Route:** `{trace.get('query_route')}` | **Retrieval Mode:** `{trace.get('retrieval_mode')}` | "
-        f"**Semantic Cache Hit:** `{trace.get('cache_hit')}`",
+        "### 🔬 End-to-End Distributed Trace & Retrieval Visibility",
+        f"- **Distributed Trace ID:** `{trace.get('trace_id', 'N/A')}` | **Query Route:** `{trace.get('query_route')}` | "
+        f"**Retrieval Mode:** `{trace.get('retrieval_mode')}` | **Semantic Cache Hit:** `{trace.get('cache_hit')}`",
         f"- **RBAC Scope:** `tenant={trace.get('tenant_id')}`, `roles={trace.get('user_roles')}` | "
         f"**Guardrail Flags:** `{guard_flags or ['clean']}`",
         f"- **CRAG Gate:** `{trace.get('crag_decision')}` | **Self-RAG Verdict:** `{trace.get('self_rag_verdict')}` | "
-        f"**Faithfulness:** `{trace.get('faithfulness_score', 0.0):.3f}` | **Citations:** `{trace.get('citation_count', 0)}`",
+        f"**Faithfulness:** `{trace.get('faithfulness_score', 0.0):.3f}` | **Inline Citations:** `{trace.get('citation_count', 0)}`",
         f"- **Total Latency:** `{trace.get('total_latency_ms', 0.0):.2f} ms` | **Tools:** `{', '.join(tools) if tools else 'None'}`",
         f"- **Expanded Sub-Queries:** `{trace.get('expanded_queries', [])}`",
         f"- **Stage Latency Breakdown:** {latency_badges or 'N/A'}",
-        "",
-        "#### 📄 Tri-Modal Hybrid Retrieval (Dense + BM25 + Entity Graph) & Cross-Encoder Table",
-        "| Rank | Chunk ID | Title | Dense | BM25 | Graph | RRF Score | Cross-Encoder Prob | CRAG |",
-        "| :---: | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |",
     ]
+
+    if funnel:
+        lines.extend(
+            [
+                "",
+                "#### 🔎 8-Stage Retrieval Candidate Funnel",
+                f"`Corpus: {funnel.get('total_corpus_chunks', 0)}` → "
+                f"`RBAC Authorized: {funnel.get('rbac_authorized_chunks', 0)}` → "
+                f"`Dense/BM25/Graph: {funnel.get('dense_candidates_count', 0)}/{funnel.get('sparse_candidates_count', 0)}/{funnel.get('graph_candidates_count', 0)}` → "
+                f"`RRF Pool: {funnel.get('rrf_fused_pool_count', 0)}` → "
+                f"`Parent Windows: {funnel.get('parent_promoted_count', 0)}` → "
+                f"`CRAG Relevant: {funnel.get('crag_relevant_count', 0)}` → "
+                f"`MMR Selected: {funnel.get('mmr_selected_count', 0)}`",
+            ]
+        )
+
+    lines.extend(
+        [
+            "",
+            "#### 📄 Tri-Modal Retrieval Explainability & Prompt Positioning",
+            "| Rank | Prompt Slot | Chunk ID | Title | RRF Breakdown (D / S / G) | Matched Terms | Matched Entities | Cross-Encoder Prob | CRAG |",
+            "| :---: | :---: | :--- | :--- | :---: | :--- | :--- | :---: | :---: |",
+        ]
+    )
 
     chunks = trace.get("retrieved_chunks") or []
     if not chunks:
-        lines.append("| - | None | _No authorized chunks matched_ | - | - | - | - | - | - |")
+        lines.append("| - | — | None | _No authorized chunks matched_ | — | — | — | — | — |")
     else:
         for idx, chk in enumerate(chunks, start=1):
-            d_str = f"#{chk['dense_rank']} ({chk['dense_score']})" if chk.get("dense_rank") else "—"
-            s_str = f"#{chk['sparse_rank']} ({chk['sparse_score']})" if chk.get("sparse_rank") else "—"
-            g_str = f"#{chk['graph_rank']} ({chk['graph_score']})" if chk.get("graph_rank") else "—"
+            slot = f"#{chk['prompt_position']}" if chk.get("prompt_position") else "—"
+            rb = chk.get("rrf_breakdown") or {}
+            rrf_str = f"`{rb.get('dense', 0):.4f}` / `{rb.get('sparse', 0):.4f}` / `{rb.get('graph', 0):.4f}`"
+            terms_str = ", ".join(f"`{t}`" for t in (chk.get("matched_terms") or [])[:4]) or "—"
+            ents_str = ", ".join(f"`{e}`" for e in (chk.get("matched_entities") or [])[:3]) or "—"
             gate_badge = "✅ PASS" if chk.get("is_relevant") else "❌ PRUNED"
             lines.append(
-                f"| {idx} | `{chk.get('chunk_id', '')[:12]}` | {chk.get('title', '')} | "
-                f"{d_str} | {s_str} | {g_str} | `{chk.get('rrf_score', 0.0):.5f}` | "
-                f"**`{chk.get('calibrated_prob', 0.0):.3f}`** | {gate_badge} |"
+                f"| {idx} | {slot} | `{chk.get('chunk_id', '')[:12]}` | {chk.get('title', '')} | "
+                f"{rrf_str} | {terms_str} | {ents_str} | **`{chk.get('calibrated_prob', 0.0):.3f}`** | {gate_badge} |"
+            )
+
+    pruned = funnel.get("pruned_chunks") or []
+    if pruned:
+        pruned_str = ", ".join(f"`{p['chunk_id'][:10]}` ({p['reason']}, p={p['calibrated_prob']:.2f})" for p in pruned)
+        lines.append(f"\n- **Pruned / Filtered Candidates:** {pruned_str}")
+
+    waterfall = trace.get("waterfall_markdown")
+    if waterfall:
+        lines.extend(["", "#### ⏱️ Distributed Trace Span Waterfall", waterfall])
+
+    citations = trace.get("citations") or []
+    if citations:
+        lines.extend(["", "#### 📚 Structured Inline Citations Extracted"])
+        for cit in citations:
+            lines.append(
+                f"- **{cit['ref_id']}** `{cit['title']}` (§{cit['section']}, `{cit['chunk_id'][:12]}`, "
+                f"prob=`{cit['calibrated_prob']:.3f}`): _{cit['supporting_quote']}_"
             )
 
     return "\n".join(lines)

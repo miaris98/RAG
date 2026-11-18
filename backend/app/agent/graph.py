@@ -91,7 +91,7 @@ from app.agent.nodes import (
 from app.agent.state import RAGGraphState
 from app.guardrails.audit import audit_logger
 from app.memory.conversation import conversation_memory
-from app.models import PipelineTrace, QueryInput, RetrievedChunk
+from app.models import CitationItem, PipelineTrace, QueryInput, RetrievedChunk
 from app.observability.metrics import metrics_collector
 from app.observability.tracing import trace_collector
 from app.retrieval.labeled_queries import labeled_query_store
@@ -161,7 +161,9 @@ def _build_initial_state(query_input: QueryInput) -> RAGGraphState:
 def _package_output(query_input: QueryInput, final_state: RAGGraphState, total_ms: float) -> Dict[str, Any]:
     retrieved_raw = final_state.get("retrieved_chunks") or []
     relevant_raw = final_state.get("relevant_chunks") or []
+    citations_raw = final_state.get("citations") or []
     retrieved_models = [RetrievedChunk(**c) for c in retrieved_raw]
+    citation_models = [CitationItem(**c) for c in citations_raw]
 
     trace = PipelineTrace(
         original_query=query_input.text,
@@ -184,6 +186,8 @@ def _package_output(query_input: QueryInput, final_state: RAGGraphState, total_m
         stage_latencies_ms=final_state.get("stage_latencies_ms") or {},
         total_latency_ms=total_ms,
         retrieved_chunks=retrieved_models,
+        retrieval_funnel=final_state.get("retrieval_funnel") or {},
+        citations=citation_models,
         web_search_triggered=bool(final_state.get("web_search_triggered", False)),
         web_snippets_preview=(final_state.get("web_results") or "")[:350],
     )

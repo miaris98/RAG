@@ -125,8 +125,17 @@ def retrieve_and_rerank(state: RAGGraphState) -> Dict[str, Any]:
         sparse_weight=float(state.get("sparse_weight", settings.sparse_weight)),
     )
     relevant_objs = context_postprocessor.lost_in_the_middle_reorder([c for c in chunks if c.is_relevant])
+    pos_map: Dict[str, int] = {}
+    for pos_idx, rel_chk in enumerate(relevant_objs, start=1):
+        rel_chk.prompt_position = pos_idx
+        pos_map[rel_chk.chunk_id] = pos_idx
+    for chk in chunks:
+        if chk.chunk_id in pos_map:
+            chk.prompt_position = pos_map[chk.chunk_id]
+
     serialized_all = [c.model_dump() for c in chunks]
     serialized_relevant = [c.model_dump() for c in relevant_objs]
+    retrieval_funnel = retrieval_engine.get_last_funnel()
 
     tools = list(state.get("tools_used") or [])
     if "document_retriever" not in tools:
@@ -142,6 +151,7 @@ def retrieve_and_rerank(state: RAGGraphState) -> Dict[str, Any]:
     return {
         "retrieved_chunks": serialized_all,
         "relevant_chunks": serialized_relevant,
+        "retrieval_funnel": retrieval_funnel,
         "tools_used": tools,
         "stage_latencies_ms": latencies,
     }
@@ -217,6 +227,64 @@ def external_web_search(state: RAGGraphState) -> Dict[str, Any]:
     }
 
 
+def _extract_best_supporting_quote(query: str, chunk_dict: Dict[str, Any]) -> str:
+    """Extracts the most query-relevant sentence/line from the chunk as an inline evidence quote."""
+    raw = chunk_dict.get("parent_content") or chunk_dict.get("content", "")
+    clean = re.sub(r"^\[Document:.*?\]\n?", "", raw).strip()
+    candidates = [s.strip(" -*#\t") for s in re.split(r"(?<=[.!?])\s+|\n+", clean) if len(s.strip()) >= 12]
+    if not candidates:
+        return clean[:240]
+
+    q_tokens = set(tokenize_content_words(query))
+    best_sent = candidates[0]
+    best_score = -1.0
+    for sent in candidates:
+        s_tokens = set(tokenize_content_words(sent))
+        overlap = len(q_tokens & s_tokens)
+        id_bonus = 2.0 if TECHNICAL_ID_PATTERN.search(sent) else 0.0
+        score = overlap + id_bonus
+        if score > best_score:
+            best_score = score
+            best_sent = sent
+    return best_sent[:240]
+
+
+def _build_structured_citations(query: str, relevant_chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Builds structured CitationItem dictionaries with exact evidence quotes for each verified chunk."""
+    citations: List[Dict[str, Any]] = []
+    for idx, chk in enumerate(relevant_chunks, start=1):
+        citations.append(
+            {
+                "ref_id": f"[Doc {idx}]",
+                "doc_id": chk.get("doc_id", ""),
+                "chunk_id": chk.get("chunk_id", ""),
+                "title": chk.get("title", "Untitled"),
+                "source": chk.get("source", ""),
+                "section": chk.get("section", "General"),
+                "calibrated_prob": float(chk.get("calibrated_prob", 0.0)),
+                "supporting_quote": _extract_best_supporting_quote(query, chk),
+                "matched_terms": list(chk.get("matched_terms") or []),
+                "matched_entities": list(chk.get("matched_entities") or []),
+            }
+        )
+    return citations
+
+
+def _format_citations_bibliography(citations: List[Dict[str, Any]]) -> str:
+    """Formats the verified inline citations bibliography block appended to grounded answers."""
+    if not citations:
+        return ""
+    lines = ["\n\n### 📚 Verified Inline Citations & Evidence Quotes"]
+    for cit in citations:
+        terms = ", ".join(f"`{t}`" for t in cit.get("matched_terms", [])[:6]) or "semantic"
+        lines.append(
+            f"- **{cit['ref_id']}** **{cit['title']}** (§{cit['section']}, `{cit['chunk_id']}`, "
+            f"source=`{cit['source']}`, prob=`{cit['calibrated_prob']:.3f}`, matched={terms})\n"
+            f"  > \"{cit['supporting_quote']}\""
+        )
+    return "\n".join(lines)
+
+
 def _build_extractive_fallback_answer(
     query: str,
     relevant_chunks: List[Dict[str, Any]],
@@ -226,9 +294,9 @@ def _build_extractive_fallback_answer(
     if relevant_chunks:
         internal_lines = []
         for idx, chk in enumerate(relevant_chunks, start=1):
-            citation = f"[Doc {idx}: {chk['title']} ({chk['chunk_id']}, score={chk['calibrated_prob']:.2f})]"
+            section = chk.get("section", "General")
+            citation = f"[Doc {idx}: {chk['title']} §{section}]"
             parent_text = chk.get("parent_content") or chk.get("content", "")
-            # Strip the contextual bracket header for cleaner reading while keeping citation
             clean_body = re.sub(r"^\[Document:.*?\]\n?", "", parent_text).strip()
             internal_lines.append(f"- {citation}: {clean_body}")
         internal_block = "\n".join(internal_lines)
@@ -332,12 +400,14 @@ CRITICAL INSTRUCTIONS:
 
 
 def verify_faithfulness_self_rag(state: RAGGraphState) -> Dict[str, Any]:
-    """Node 6 (Self-RAG Grader): Audits citation presence and lexical faithfulness against retrieved chunks."""
+    """Node 6 (Self-RAG Grader): Audits citation presence, builds structured citations, and verifies grounding."""
     t0 = time.perf_counter()
+    query = state.get("query", "")
     draft = state.get("draft_answer", "")
     relevant_chunks = state.get("relevant_chunks") or []
     enable_self_rag = state.get("enable_self_rag", True)
 
+    structured_citations = _build_structured_citations(query, relevant_chunks)
     citations = re.findall(r"\[Doc\s*\d+[^\]]*\]", draft, flags=re.IGNORECASE)
     citation_count = len(citations)
 
@@ -350,7 +420,6 @@ def verify_faithfulness_self_rag(state: RAGGraphState) -> Dict[str, Any]:
         faithfulness = 1.0 if "do not contain" in draft.lower() or "0 chunks" in draft.lower() else 0.7
         final_answer = draft
     else:
-        # Compute content-token support ratio between the internal answer section and retrieved parent chunks
         internal_section = draft.split("### According to the internet:")[0]
         answer_tokens = tokenize_content_words(internal_section)
         source_corpus_text = " ".join(
@@ -364,14 +433,10 @@ def verify_faithfulness_self_rag(state: RAGGraphState) -> Dict[str, Any]:
         else:
             support_ratio = 1.0
 
-        # If the LLM forgot to include [Doc i] citations despite having relevant chunks, inject explicit provenance
         if citation_count == 0:
-            provenance_footer = "\n\n**Verified Internal Citations (Self-RAG Enforced):**\n" + "\n".join(
-                f"- `[Doc {i}]` **{c['title']}** (`{c['chunk_id']}`, calibrated_prob=`{c['calibrated_prob']:.3f}`)"
-                for i, c in enumerate(relevant_chunks, start=1)
-            )
-            final_answer = draft + provenance_footer
-            citation_count = len(relevant_chunks)
+            inline_badges = " ".join(f"{c['ref_id']}" for c in structured_citations)
+            final_answer = draft + (f"\n\n**Verified Sources:** {inline_badges}" if inline_badges else "")
+            citation_count = len(structured_citations)
             verdict = "revised"
         else:
             final_answer = draft
@@ -379,6 +444,9 @@ def verify_faithfulness_self_rag(state: RAGGraphState) -> Dict[str, Any]:
 
         citation_bonus = 0.25 if citation_count > 0 else 0.0
         faithfulness = round(min(1.0, 0.75 * min(1.0, support_ratio * 1.35) + citation_bonus), 4)
+
+    if structured_citations and "### 📚 Verified Inline Citations & Evidence Quotes" not in final_answer:
+        final_answer = final_answer + _format_citations_bibliography(structured_citations)
 
     tools = list(state.get("tools_used") or [])
     if enable_self_rag and "self_rag_verifier" not in tools:
@@ -401,6 +469,7 @@ def verify_faithfulness_self_rag(state: RAGGraphState) -> Dict[str, Any]:
             "self_rag_verdict": "retrying",
             "faithfulness_score": faithfulness,
             "citation_count": citation_count,
+            "citations": structured_citations,
             "retry_count": retry_count + 1,
             "top_k": min(10, top_k + 2),
             "critique_history": critique_history,
@@ -413,6 +482,7 @@ def verify_faithfulness_self_rag(state: RAGGraphState) -> Dict[str, Any]:
         "self_rag_verdict": verdict,
         "faithfulness_score": faithfulness,
         "citation_count": citation_count,
+        "citations": structured_citations,
         "retry_count": retry_count,
         "critique_history": critique_history,
         "tools_used": tools,

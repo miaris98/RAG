@@ -76,6 +76,25 @@ class RetrievedChunk(BaseModel):
     rerank_logit: Optional[float] = None
     calibrated_prob: float = 0.0
     is_relevant: bool = True
+    matched_terms: List[str] = Field(default_factory=list)
+    matched_entities: List[str] = Field(default_factory=list)
+    rrf_breakdown: Dict[str, float] = Field(default_factory=dict)
+    prompt_position: Optional[int] = None
+
+
+class CitationItem(BaseModel):
+    """Structured inline citation linking generated claims back to exact retrieved evidence."""
+
+    ref_id: str
+    doc_id: str
+    chunk_id: str
+    title: str
+    source: str
+    section: str = "General"
+    calibrated_prob: float = 0.0
+    supporting_quote: str = ""
+    matched_terms: List[str] = Field(default_factory=list)
+    matched_entities: List[str] = Field(default_factory=list)
 
 
 class QueryInput(BaseModel):
@@ -158,6 +177,9 @@ class PipelineTrace(BaseModel):
     stage_latencies_ms: Dict[str, float] = Field(default_factory=dict)
     total_latency_ms: float = 0.0
     retrieved_chunks: List[RetrievedChunk] = Field(default_factory=list)
+    retrieval_funnel: Dict[str, Any] = Field(default_factory=dict)
+    citations: List[CitationItem] = Field(default_factory=list)
+    waterfall_markdown: str = ""
     web_search_triggered: bool = False
     web_snippets_preview: str = ""
 

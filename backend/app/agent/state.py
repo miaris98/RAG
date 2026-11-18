@@ -35,6 +35,7 @@ class RAGGraphState(TypedDict, total=False):
     # Stage 2: Tri-Modal Hybrid Retrieval & Cross-Encoder Reranking
     retrieved_chunks: List[Dict[str, Any]]
     relevant_chunks: List[Dict[str, Any]]
+    retrieval_funnel: Dict[str, Any]
 
     # Stage 3: Corrective RAG (CRAG) Gate
     crag_decision: str  # "sufficient" | "ambiguous_web_augmented" | "insufficient_web_fallback"
@@ -51,6 +52,7 @@ class RAGGraphState(TypedDict, total=False):
     self_rag_verdict: str  # "grounded" | "revised" | "no_internal_context" | "skipped"
     faithfulness_score: float
     citation_count: int
+    citations: List[Dict[str, Any]]
 
     # Telemetry & Tool Audit
     tools_used: List[str]

@@ -265,6 +265,7 @@ async def debug_retrieve(req: RetrieveDebugRequest):
         "tenant_id": req.tenant_id,
         "user_roles": req.user_roles,
         "count": len(chunks),
+        "retrieval_funnel": retrieval_engine.get_last_funnel(),
         "results": [c.model_dump() for c in chunks],
     }
 
