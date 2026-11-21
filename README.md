@@ -10,7 +10,7 @@ An interview-ready, production-grade **Retrieval-Augmented Generation (RAG)** mi
 
 ## 🎯 60-Second Interview Elevator Pitch
 
-> *"Instead of a naive dense-only prototype, I built a modular, 100% local **Production RAG Platform** with **Pre-Filtered Multi-Tenant RBAC**, **Table-, Fenced-Code & AST-Symbol-Aware Parent-Child Chunking** with SHA-256 deduplication, **Anthropic Contextual Enrichment**, **Shopify/Notion CDC Incremental Upserts**, and a **Tri-Modal Hybrid Retrieval Engine** (Milvus Dense + BM25 + 1-hop Entity Knowledge Graph fused via **Reciprocal Rank Fusion** with **Freshness Time-Decay & Version Precedence**, followed by **Cross-Encoder Reranking**, **MMR Diversity**, and **Lost-in-the-Middle** U-shaped reordering). Orchestration runs on a **cyclic LangGraph StateGraph** implementing **Adaptive Query Routing**, **Corrective RAG (CRAG)** gating, **Self-RAG** faithfulness verification with **structured `[Doc i]` inline citations**, and **DoorDash Inverted RAG / Ramp Rule-Grounded Structured JSON Classification**. The system includes **PII & Prompt Injection Guardrails**, **GDPR Article 17 surgical erasure**, a **tamper-evident SHA-256 hash-chained audit ledger**, **Zendesk-style user feedback telemetry**, **hierarchical distributed span waterfalls**, **Prometheus/Grafana**, **P2.1 LLM-as-a-Judge & Human Calibration**, and an automated **41-test TDD & 5-mode IR Ablation suite**."*
+> *"Instead of a naive dense-only prototype, I built a modular, 100% local **Production RAG Platform** with **Pre-Filtered Multi-Tenant RBAC**, **Table-, Fenced-Code & AST-Symbol-Aware Parent-Child Chunking** with SHA-256 deduplication, **Anthropic Contextual Enrichment**, **Shopify/Notion CDC Incremental Upserts**, and a **Tri-Modal Hybrid Retrieval Engine** (Milvus Dense + BM25 + 1-hop Entity Knowledge Graph fused via **Reciprocal Rank Fusion** with **Freshness Time-Decay & Version Precedence**, followed by **Cross-Encoder Reranking**, **MMR Diversity**, and **Lost-in-the-Middle** U-shaped reordering). Orchestration runs on a **cyclic LangGraph StateGraph** implementing **Adaptive Query Routing**, **Corrective RAG (CRAG)** gating, **Self-RAG** faithfulness verification with **structured `[Doc i]` inline citations**, and **DoorDash Inverted RAG / Ramp Rule-Grounded Structured JSON Classification**. The system includes **PII & Prompt Injection Guardrails**, **GDPR Article 17 surgical erasure**, a **tamper-evident SHA-256 hash-chained audit ledger**, **Zendesk-style user feedback telemetry**, **hierarchical distributed span waterfalls**, **Prometheus/Grafana**, **P2.1 LLM-as-a-Judge & Human Calibration**, **Perplexity Late Chunking**, **NVIDIA PDF Table Extraction**, **Spotify Semantic IDs**, **Airbnb Tenant Shard Routing**, **LinkedIn Shared-Prefix KV Caching**, **Instacart Cache Pre-Warming**, **Agoda OpsBot Read-Only SQL Live Inventory**, and an automated **50-test TDD & 5-mode IR Ablation suite**."*
 
 ```mermaid
 flowchart LR
@@ -33,6 +33,9 @@ flowchart LR
 | **Gradio 4-Tab Studio** | [http://127.0.0.1:7860](http://127.0.0.1:7860) | [http://localhost:7860](http://localhost:7860) | Main interactive UI (Ingestion, SSE Query, Ablations, Audit Center) |
 | **FastAPI Swagger UI** | [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) | [http://localhost:8000/docs](http://localhost:8000/docs) | Interactive OpenAPI schema (`/ingest/cdc`, `/query-structured`, `/feedback`, GDPR erase) |
 | **User Feedback KPIs** | [http://127.0.0.1:8000/feedback](http://127.0.0.1:8000/feedback) | [http://localhost:8000/feedback](http://localhost:8000/feedback) | Rolling thumbs-up/down satisfaction rate & recent user ratings |
+| **Shards & Semantic Clusters** | [http://127.0.0.1:8000/corpus/shards-and-clusters](http://127.0.0.1:8000/corpus/shards-and-clusters) | [http://localhost:8000/corpus/shards-and-clusters](http://localhost:8000/corpus/shards-and-clusters) | Airbnb tenant partition shards & Spotify `sem.*` clusters |
+| **Cache & Prefix Stats** | [http://127.0.0.1:8000/cache/stats](http://127.0.0.1:8000/cache/stats) | [http://localhost:8000/cache/stats](http://localhost:8000/cache/stats) | Semantic Cache + LinkedIn Shared-Prefix KV amortization (`POST /cache/prewarm`) |
+| **Live SQL OpsBot Inventory** | [http://127.0.0.1:8000/inventory/sql-status](http://127.0.0.1:8000/inventory/sql-status) | [http://localhost:8000/inventory/sql-status](http://localhost:8000/inventory/sql-status) | Agoda read-only SQLite service/incident DB (`POST /inventory/sql-query`) |
 | **Distributed Traces JSON** | [http://127.0.0.1:8000/traces](http://127.0.0.1:8000/traces) | [http://localhost:8000/traces](http://localhost:8000/traces) | Langfuse-compatible parent-child spans & waterfall timings |
 | **Compliance Audit Dossier** | [http://127.0.0.1:8000/compliance/audit-report](http://127.0.0.1:8000/compliance/audit-report) | [http://localhost:8000/compliance/audit-report](http://localhost:8000/compliance/audit-report) | Full JSON + Markdown system audit report |
 | **SHA-256 Audit Ledger** | [http://127.0.0.1:8000/audit-logs](http://127.0.0.1:8000/audit-logs) | [http://localhost:8000/audit-logs](http://localhost:8000/audit-logs) | Tamper-evident hash-chained event history (`chain_valid: true`) |
@@ -106,7 +109,7 @@ Open **[http://127.0.0.1:7860](http://127.0.0.1:7860)** and walk the interviewer
 
 ---
 
-## 🧪 Step 3: Run Automated Tests (`41` TDD, Security, Judge, CDC & GDPR Tests)
+## 🧪 Step 3: Run Automated Tests (`50` TDD, Security, Judge, CDC, Sharding, SQL & GDPR Tests)
 
 ```powershell
 cd C:\Users\miari\Desktop\RAG
@@ -141,7 +144,7 @@ RAG/
 │   ├── mcp_server.py              # RBAC-scoped MCP server (retrieve, ingest, GDPR erase)
 │   ├── main.py                    # FastAPI gateway
 │   ├── debug.py                   # CLI diagnostic & ablation inspector
-│   └── tests/                     # 41 automated TDD unit, integration, judge, CDC, taxonomy, GDPR & OWASP tests
+│   └── tests/                     # 50 automated TDD unit, integration, judge, CDC, PDF, sharding, SQL, GDPR & OWASP tests
 ├── frontend/
 │   └── app.py                     # 4-Tab Gradio Observability, Eval & Compliance Audit Studio
 ├── docs/

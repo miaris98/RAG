@@ -300,3 +300,9 @@ class PrewarmCacheRequest(BaseModel):
     user_roles: List[str] = Field(default_factory=lambda: ["public", "engineering"])
     retrieval_mode: RetrievalMode = Field(default="hybrid_graph_rerank")
     top_k: int = Field(default=5, ge=1, le=20)
+
+
+class SQLQueryRequest(BaseModel):
+    """#25 Agoda OpsBot read-only SQL query payload."""
+
+    sql: str = Field(..., min_length=6, max_length=1000, description="Read-only SELECT SQL query.")

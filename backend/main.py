@@ -14,6 +14,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from app.agent.graph import execute_rag_pipeline, stream_rag_pipeline_sse
+from app.agent.sql_tool import sql_inventory_tool
 from app.agent.structured import execute_structured_taxonomy_query
 from app.config import settings
 from app.evaluation.benchmark import run_ablation_benchmark
@@ -26,6 +27,7 @@ from app.models import (
     PrewarmCacheRequest,
     QueryInput,
     RetrieveDebugRequest,
+    SQLQueryRequest,
     StructuredQueryRequest,
     StructuredQueryResponse,
     UserFeedbackRequest,
@@ -450,6 +452,23 @@ async def get_cache_statistics():
         "semantic_cache": semantic_cache.stats(),
         "prefix_cache": prefix_cache.stats(),
     }
+
+
+@app.get("/inventory/sql-status")
+async def get_live_sql_inventory_status():
+    """#25 Agoda OpsBot live SQL service inventory & active incidents snapshot."""
+    return sql_inventory_tool.get_live_snapshot()
+
+
+@app.post("/inventory/sql-query")
+async def run_readonly_sql_inventory_query(req: SQLQueryRequest):
+    """#25 Agoda OpsBot strictly read-only SELECT SQL query endpoint."""
+    try:
+        return sql_inventory_tool.execute_readonly_sql(req.sql)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"SQL query failed: {exc}") from exc
 
 
 @app.post("/evaluate")
