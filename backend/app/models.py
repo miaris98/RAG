@@ -282,3 +282,21 @@ class StructuredQueryResponse(BaseModel):
     extracted_entities: List[str] = Field(default_factory=list)
     citations: List[CitationItem] = Field(default_factory=list)
     audit_event_hash: str
+
+
+class PrewarmCacheRequest(BaseModel):
+    """#22 Instacart offline head-query cache pre-warming request."""
+
+    queries: List[str] = Field(
+        default_factory=lambda: [
+            "What triggers ERR_LEDGER_9042 and what is the remediation command?",
+            "What is the p95 retrieval latency SLO and maximum unfaithfulness rate for production RAG?",
+            "Which MinIO bucket and encryption cipher store transaction audit embeddings?",
+        ],
+        min_length=1,
+        max_length=50,
+    )
+    tenant_id: str = Field(default="default")
+    user_roles: List[str] = Field(default_factory=lambda: ["public", "engineering"])
+    retrieval_mode: RetrievalMode = Field(default="hybrid_graph_rerank")
+    top_k: int = Field(default=5, ge=1, le=20)

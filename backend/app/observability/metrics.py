@@ -179,8 +179,10 @@ class MetricsCollector:
                 f'rag_circuit_breaker_open{{service="duckduckgo_web"}} {web_open}',
             ]
         from app.observability.feedback import feedback_store
+        from app.retrieval.prefix_cache import prefix_cache
 
         fb = feedback_store.summary(limit=1)
+        pc = prefix_cache.stats()
         lines.extend(
             [
                 "# HELP rag_user_feedback_total Total thumbs-up and thumbs-down user feedback ratings.",
@@ -190,6 +192,12 @@ class MetricsCollector:
                 "# HELP rag_user_satisfaction_rate Rolling user thumbs-up satisfaction ratio [0.0, 1.0].",
                 "# TYPE rag_user_satisfaction_rate gauge",
                 f'rag_user_satisfaction_rate {fb["satisfaction_rate"]}',
+                "# HELP rag_prefix_cache_hits_total Total LinkedIn-style shared prompt prefix KV-cache hits.",
+                "# TYPE rag_prefix_cache_hits_total counter",
+                f'rag_prefix_cache_hits_total {pc["prefix_hits"]}',
+                "# HELP rag_prefix_cache_amortized_tokens_total Total prompt prefix tokens amortized via KV-cache reuse.",
+                "# TYPE rag_prefix_cache_amortized_tokens_total counter",
+                f'rag_prefix_cache_amortized_tokens_total {pc["amortized_prefix_tokens_total"]}',
             ]
         )
         return "\n".join(lines) + "\n"
