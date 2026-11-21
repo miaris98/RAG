@@ -30,11 +30,43 @@ class DocumentInput(BaseModel):
     retention_days: int = Field(default=90, ge=1, le=3650, description="GDPR data retention TTL in days.")
     lawful_basis: str = Field(default="legitimate_interest", description="GDPR Article 6 lawful basis.")
     version: int = Field(default=1, ge=1, description="Document version for precedence ranking.")
+    updated_at: Optional[float] = Field(
+        default=None,
+        description="Optional UNIX epoch timestamp for freshness time-decay ranking (defaults to now).",
+    )
     enable_contextual_enrichment: bool = Field(
         default=False,
         description="Prepend Anthropic-style document-level contextual summary prefix to each chunk.",
     )
     metadata: Optional[Dict[str, Any]] = Field(default=None, description="Optional custom metadata tags.")
+
+
+class CDCEventRequest(BaseModel):
+    """Shopify/Notion-style Change Data Capture (CDC) webhook event for incremental upserts & deletes."""
+
+    external_id: str = Field(..., min_length=1, max_length=200, description="Stable upstream record ID.")
+    action: Literal["upsert", "delete"] = Field(default="upsert")
+    content: str = Field(default="", description="Updated document content (required for upsert).")
+    title: str = Field(default="CDC Document")
+    source: str = Field(default="cdc_webhook")
+    chunking_strategy: ChunkingStrategy = Field(default="parent_child")
+    tenant_id: str = Field(default="default")
+    access_roles: List[str] = Field(default_factory=lambda: ["public"])
+    version: int = Field(default=1, ge=1)
+    updated_at: Optional[float] = Field(default=None)
+    enable_contextual_enrichment: bool = Field(default=False)
+    metadata: Optional[Dict[str, Any]] = Field(default=None)
+
+
+class UserFeedbackRequest(BaseModel):
+    """Zendesk-style user thumbs-up/down feedback payload tied to a RAG query/trace."""
+
+    rating: Literal["up", "down"]
+    query: str = Field(..., min_length=1, max_length=1000)
+    trace_id: Optional[str] = Field(default=None)
+    chunk_ids: List[str] = Field(default_factory=list)
+    user_roles: List[str] = Field(default_factory=lambda: ["public"])
+    comment: str = Field(default="", max_length=1000)
 
 
 class ChunkRecord(BaseModel):
@@ -83,6 +115,8 @@ class RetrievedChunk(BaseModel):
     matched_terms: List[str] = Field(default_factory=list)
     matched_entities: List[str] = Field(default_factory=list)
     rrf_breakdown: Dict[str, float] = Field(default_factory=dict)
+    freshness_boost: float = 1.0
+    version_boost: float = 1.0
     prompt_position: Optional[int] = None
 
 

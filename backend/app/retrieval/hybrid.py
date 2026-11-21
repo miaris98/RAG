@@ -396,6 +396,7 @@ class HybridRetrievalEngine:
 
             candidates: List[RetrievedChunk] = []
             rrf_k = settings.rrf_k
+            now_ts = time.time()
             for cid in candidate_ids:
                 record = self._chunks_by_id[cid]
                 d_rank = dense_ranks_per_chunk.get(cid)
@@ -408,7 +409,15 @@ class HybridRetrievalEngine:
                 d_rrf = (dense_weight / (rrf_k + d_rank)) if (d_rank is not None and mode != "sparse") else 0.0
                 s_rrf = (sparse_weight / (rrf_k + s_rank)) if (s_rank is not None and mode != "dense") else 0.0
                 g_rrf = (graph_weight / (rrf_k + g_rank)) if (g_rank is not None and mode == "hybrid_graph_rerank") else 0.0
-                rrf_val = d_rrf + s_rrf + g_rrf
+
+                # Reddit/Yelp freshness time-decay + Figma version precedence boost
+                raw_updated_at = record.metadata.get("updated_at")
+                updated_ts = float(raw_updated_at) if isinstance(raw_updated_at, (int, float)) else now_ts
+                age_days = max(0.0, (now_ts - updated_ts) / 86400.0)
+                freshness_boost = round(0.85 + 0.15 * math.exp(-0.004 * min(age_days, 365.0)), 4)
+                version_num = max(1, int(record.metadata.get("version") or 1))
+                version_boost = round(1.0 + 0.04 * min(version_num - 1, 10), 4)
+                rrf_val = (d_rrf + s_rrf + g_rrf) * freshness_boost * version_boost
 
                 initial_prob = 0.0
                 if d_score is not None and s_score is not None:
@@ -451,6 +460,8 @@ class HybridRetrievalEngine:
                             "sparse": round(s_rrf, 6),
                             "graph": round(g_rrf, 6),
                         },
+                        freshness_boost=freshness_boost,
+                        version_boost=version_boost,
                     )
                 )
 
@@ -537,6 +548,17 @@ class HybridRetrievalEngine:
             }
 
             return final_chunks
+
+    def find_doc_ids_by_external_id(self, external_id: str, tenant_id: str = "default") -> List[str]:
+        """Finds all active doc_ids matching a CDC external_id within a tenant namespace."""
+        with self._lock:
+            return sorted(
+                {
+                    chk.doc_id
+                    for chk in self._chunks_by_id.values()
+                    if chk.tenant_id == tenant_id and chk.metadata.get("external_id") == external_id
+                }
+            )
 
     def delete_by_doc_id(self, doc_id: str) -> int:
         """GDPR Article 17 Surgical Erasure: removes all chunks of doc_id across Dense, BM25, and Entity Graph."""

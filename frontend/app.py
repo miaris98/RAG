@@ -455,6 +455,37 @@ def stream_query_live(
         yield f"❌ SSE Stream Error: {exc}", "_Stream interrupted._"
 
 
+def submit_feedback_to_backend(
+    rating: str,
+    query: str,
+    user_roles: Optional[List[str]] = None,
+) -> str:
+    """Sends thumbs-up/down user feedback to POST /feedback."""
+    if not query or not query.strip():
+        return "⚠️ Enter or run a query before submitting feedback."
+    try:
+        resp = requests.post(
+            f"{BACKEND_URL}/feedback",
+            json={
+                "rating": rating,
+                "query": query.strip(),
+                "user_roles": user_roles or ["public"],
+                "comment": f"Submitted via Gradio Tab 2 ({rating})",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        s = data.get("summary", {})
+        return (
+            f"✅ Feedback recorded (`{rating.upper()}`) | "
+            f"👍 `{s.get('thumbs_up', 0)}` / 👎 `{s.get('thumbs_down', 0)}` "
+            f"(Satisfaction: `{s.get('satisfaction_rate', 1.0) * 100:.1f}%`)"
+        )
+    except Exception as exc:
+        return f"❌ Feedback error: `{exc}`"
+
+
 def handle_run_evaluation(top_k: int = 3, enable_judge_eval: bool = True) -> str:
     res = run_evaluation_on_backend(top_k=int(top_k), enable_judge_eval=bool(enable_judge_eval))
     if res.get("status") == "error":
@@ -559,6 +590,10 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
                         label="Grounded & Cited Response",
                         value="_Stream or submit a query to view the cited response._",
                     )
+                    with gr.Row():
+                        fb_up_btn = gr.Button("👍 Helpful Response")
+                        fb_down_btn = gr.Button("👎 Needs Improvement")
+                        fb_status_md = gr.Markdown(value="_Rate response quality to log Zendesk-style feedback._")
                     trace_output = gr.Markdown(
                         label="Pipeline Trace & Tri-Modal Score Breakdown",
                         value="_Retrieval telemetry will appear here._",
@@ -640,6 +675,16 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
         outputs=[submission_out, job_id_state],
     )
     check_btn.click(check_status, inputs=job_id_state, outputs=[final_output, trace_output])
+    fb_up_btn.click(
+        lambda q, r: submit_feedback_to_backend("up", q, r),
+        inputs=[q_input, query_roles],
+        outputs=fb_status_md,
+    )
+    fb_down_btn.click(
+        lambda q, r: submit_feedback_to_backend("down", q, r),
+        inputs=[q_input, query_roles],
+        outputs=fb_status_md,
+    )
     eval_btn.click(handle_run_evaluation, inputs=[eval_top_k, eval_judge_chk], outputs=eval_output)
     audit_refresh_btn.click(
         fetch_compliance_audit_dashboard,
