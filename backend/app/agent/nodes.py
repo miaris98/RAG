@@ -349,7 +349,15 @@ def synthesize_cited_answer(state: RAGGraphState) -> Dict[str, Any]:
     else:
         formatted_context_blocks = []
 
+    from app.agent.sql_tool import sql_inventory_tool
     from app.retrieval.prefix_cache import prefix_cache
+
+    sql_result = sql_inventory_tool.maybe_answer_from_live_sql(query)
+    tools = list(state.get("tools_used") or [])
+    if sql_result is not None:
+        formatted_context_blocks.append(f"[Live SQL OpsBot DB]\n{sql_result['markdown']}")
+        if "sql_live_inventory_tool" not in tools:
+            tools.append("sql_live_inventory_tool")
 
     prompt_bundle = prefix_cache.build_prompt(
         context_blocks=formatted_context_blocks,
@@ -373,12 +381,16 @@ def synthesize_cited_answer(state: RAGGraphState) -> Dict[str, Any]:
             print(f"[synthesize_cited_answer] LLM call failed, using deterministic grounded synthesis: {exc}")
             draft = _build_extractive_fallback_answer(query, relevant_chunks, web_results)
 
+    if sql_result is not None and "Live SQL Inventory" not in draft:
+        draft = f"{draft}\n\n{sql_result['markdown']}"
+
     latencies = dict(state.get("stage_latencies_ms") or {})
     latencies["generation_ms"] = round((time.perf_counter() - t0) * 1000.0, 2)
 
     return {
         "draft_answer": draft,
         "final_answer": draft,
+        "tools_used": tools,
         "stage_latencies_ms": latencies,
     }
 

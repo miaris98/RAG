@@ -9,70 +9,70 @@
 ### A. Big Tech & Foundation AI Labs (10 Companies)
 | # | Company | Key Production RAG Pattern from Tech Blog | Status in Our Repo |
 | :- | :--- | :--- | :--- |
-| 1 | **Google** | Structure-aware chunking, content-hash incremental indexing, distributed LLMOps tracing | ✅ Partial (SHA-256 + stage latencies) |
-| 2 | **Netflix** | Stateful ingestion orchestration, avoiding reindex tax, distributed observability | ✅ Partial (RabbitMQ + latency trace) |
+| 1 | **Google** | Structure-aware chunking, content-hash incremental indexing, distributed LLMOps tracing | ✅ Implemented (SHA-256 + hierarchical span waterfall) |
+| 2 | **Netflix** | Stateful ingestion orchestration, avoiding reindex tax, distributed observability | ✅ Implemented (RabbitMQ async ingest + Prometheus/Grafana) |
 | 3 | **Meta** | Dense + sparse retrieval scaling, avoiding unnecessary agentic complexity | ✅ Implemented |
 | 4 | **Microsoft** | Retrieval-time ACLs inside vector index; treat retrieved text as untrusted input | ✅ Implemented (Pre-filtered RBAC + Guardrails) |
-| 5 | **AWS** | OpenSearch Hybrid BM25 + Vector, Step Functions async ingestion, X-Ray tracing | ✅ Partial (Missing async `/ingest` queue) |
-| 6 | **Anthropic** | Contextual Retrieval (LLM-generated chunk prefix + Contextual BM25, -49% failures) | ✅ Partial (Template header; needs LLM contextualizer) |
+| 5 | **AWS** | OpenSearch Hybrid BM25 + Vector, Step Functions async ingestion, X-Ray tracing | ✅ Implemented (`POST /ingest-async` + distributed traces) |
+| 6 | **Anthropic** | Contextual Retrieval (contextual chunk prefix + Contextual BM25, -49% failures) | ✅ Implemented (`enable_contextual_enrichment` prefixing) |
 | 7 | **OpenAI** | Two-stage bi-encoder retrieval + cross-encoder reranking; avoid context noise | ✅ Implemented |
 | 8 | **Cohere** | Cross-Encoder stage-2 precision reranking over top-50/top-12 candidates | ✅ Implemented |
-| 9 | **Perplexity** | Document-boundary-aware contextual embeddings (`pplx-embed-context-v1`) | 🔲 TODO (Late Chunking / Context-aware boundary pass) |
-| 10 | **NVIDIA** | Multimodal table/chart extraction (NeMo Retriever) + Judge/Reward scoring | 🔲 TODO (Table-aware chunker & PDF layout parser) |
+| 9 | **Perplexity** | Document-boundary-aware contextual embeddings (`pplx-embed-context-v1`) | ✅ Implemented (`enable_late_chunking` doc-vector blending) |
+| 10 | **NVIDIA** | Multimodal table/chart extraction (NeMo Retriever) + Judge/Reward scoring | ✅ Implemented (`POST /ingest/pdf` layout/table parser + `judge.py`) |
 
 ### B. Social, Search & Media Platforms (8 Companies)
 | # | Company | Key Production RAG Pattern from Tech Blog | Status in Our Repo |
 | :- | :--- | :--- | :--- |
-| 11 | **Reddit** | Append-only mini-indices + periodic merges for high-frequency freshness; Hybrid BM25+HNSW | 🔲 TODO (Freshness/time-decay boost + incremental merge) |
-| 12 | **LinkedIn** | Retrieval-as-Ranking (RAR), shared-prefix prompt caching/amortization, pruned SLMs | 🔲 TODO (Shared-prefix prompt caching / KV reuse) |
+| 11 | **Reddit** | Append-only mini-indices + periodic merges for high-frequency freshness; Hybrid BM25+HNSW | ✅ Implemented (`freshness_boost` time-decay + CDC upserts) |
+| 12 | **LinkedIn** | Retrieval-as-Ranking (RAR), shared-prefix prompt caching/amortization, pruned SLMs | ✅ Implemented (`prefix_cache.py` KV prefix amortization + Prometheus) |
 | 13 | **Pinterest** | *Manas* distributed hybrid semantic + lexical search platform | ✅ Implemented |
-| 14 | **Spotify** | Semantic IDs & multi-task search + recommendation retrieval | 🔲 TODO (Entity/Semantic ID clustering) |
+| 14 | **Spotify** | Semantic IDs & multi-task search + recommendation retrieval | ✅ Implemented (`semantic_ids.py` 4-level `sem.*` IDs + prefix filter) |
 | 15 | **Slack** | Scoped context retrieval strictly inheriting workspace/channel ACLs | ✅ Implemented |
-| 16 | **Yelp** | FAISS PQ sub-20ms @ p99 + reranking folding in business-logic & freshness scores | 🔲 TODO (Recency/version decay in reranker) |
-| 17 | **Cursor** | AST-aware code chunking, symbol resolution, minimizing prompt pollution | 🔲 TODO (AST/code-block-aware chunker + MMR) |
-| 18 | **GitHub** | Hybrid code + documentation indexing with symbol-aware retrieval | 🔲 TODO (Code symbol metadata extraction) |
+| 16 | **Yelp** | FAISS PQ sub-20ms @ p99 + reranking folding in business-logic & freshness scores | ✅ Implemented (`freshness_boost` & `version_boost` in RRF) |
+| 17 | **Cursor** | AST-aware code chunking, symbol resolution, minimizing prompt pollution | ✅ Implemented (Atomic fenced code + Python AST + MMR) |
+| 18 | **GitHub** | Hybrid code + documentation indexing with symbol-aware retrieval | ✅ Implemented (`extract_code_symbols` AST/polyglot metadata) |
 
 ### C. Marketplaces, Delivery & Travel (9 Companies)
 | # | Company | Key Production RAG Pattern from Tech Blog | Status in Our Repo |
 | :- | :--- | :--- | :--- |
-| 19 | **Uber** | *Genie* EAg-RAG: LangGraph multi-agent loop with table/metadata extraction & refinement | ✅ Partial (Needs cyclic self-correction loop) |
-| 20 | **Airbnb** | Contrastive Two-Tower EBR + sharded scatter-gather ANN serving | ✅ Partial (Needs Milvus partition/shard routing) |
-| 21 | **DoorDash** | "Inverted RAG": ANN retrieves top-100 taxonomy concepts to constrain LLM output space | 🔲 TODO (Constrained taxonomy/enum output mode) |
-| 22 | **Instacart** | Head/Tail traffic splitting: offline RAG cache for head queries vs. real-time LLM for tail | ✅ Partial (Semantic Cache; add head-query pre-warming) |
-| 23 | **Lyft** | `lyft2vec` graph embeddings + *AI Assist* multi-stage support RAG with strict evals | ✅ Partial (Entity Graph + Eval) |
-| 24 | **Booking.com** | `Orchestrator -> Moderation -> Agent -> RAG` + 1-year Judge-LLM evaluation lessons | 🔲 TODO (LLM-as-a-Judge evaluation mode) |
-| 25 | **Agoda** | DB-backed live inventory retrieval + *OpsBot* (OpenTelemetry traces + post-mortem RAG) | 🔲 TODO (Structured SQL/API tool alongside vector RAG) |
-| 26 | **Expedia Group** | MCP protocol tool bridge + Neo4j entity graph unifying fragmented data | 🔲 TODO (Expose RAG engine as MCP tool server) |
-| 27 | **Grab** | *LLM-Kit* standardized FastAPI+LangGraph+OTel boilerplate + negation-aware vector search | 🔲 TODO (Negation-aware reranker & OpenTelemetry) |
+| 19 | **Uber** | *Genie* EAg-RAG: LangGraph multi-agent loop with table/metadata extraction & refinement | ✅ Implemented (Cyclic LangGraph Self-RAG + table chunker) |
+| 20 | **Airbnb** | Contrastive Two-Tower EBR + sharded scatter-gather ANN serving | ✅ Implemented (Tenant partition shard routing + `/corpus/shards-and-clusters`) |
+| 21 | **DoorDash** | "Inverted RAG": ANN retrieves top-100 taxonomy concepts to constrain LLM output space | ✅ Implemented (`POST /query-structured` constrained enum mode) |
+| 22 | **Instacart** | Head/Tail traffic splitting: offline RAG cache for head queries vs. real-time LLM for tail | ✅ Implemented (`POST /cache/prewarm` + Semantic Query Cache) |
+| 23 | **Lyft** | `lyft2vec` graph embeddings + *AI Assist* multi-stage support RAG with strict evals | ✅ Implemented (Tri-Modal Entity Graph + 5-Mode Ablations) |
+| 24 | **Booking.com** | `Orchestrator -> Moderation -> Agent -> RAG` + 1-year Judge-LLM evaluation lessons | ✅ Implemented (`RAGJudgeEvaluator` + Guardrails + Router) |
+| 25 | **Agoda** | DB-backed live inventory retrieval + *OpsBot* (OpenTelemetry traces + post-mortem RAG) | ✅ Implemented (`sql_tool.py` read-only SQLite OpsBot + `/inventory/sql-*`) |
+| 26 | **Expedia Group** | MCP protocol tool bridge + Neo4j entity graph unifying fragmented data | ✅ Implemented (`mcp_server.py` RBAC MCP tools + Entity Graph) |
+| 27 | **Grab** | *LLM-Kit* standardized FastAPI+LangGraph+OTel boilerplate + negation-aware vector search | ✅ Implemented (Negation-aware reranker + distributed trace spans) |
 
 ### D. SaaS, Collaboration & Developer Platforms (13 Companies)
 | # | Company | Key Production RAG Pattern from Tech Blog | Status in Our Repo |
 | :- | :--- | :--- | :--- |
-| 28 | **Notion** | Dual-path ingestion (Spark batch + Kafka/Debezium CDC streaming) + tenant shards | 🔲 TODO (Async Kafka/RabbitMQ ingestion worker) |
-| 29 | **Stripe** | *Kai* hybrid RAG + tool-calling with sub-200ms incremental index updates | ✅ Partial |
-| 30 | **Shopify** | Change Data Capture (CDC) ingestion for semi-structured catalog schemas | 🔲 TODO (Webhook/CDC incremental upsert endpoint) |
-| 31 | **Dropbox** | *Dropbox Dash*: human-calibrated LLM-as-a-judge to catch hallucinated filenames | 🔲 TODO (Golden Judge calibration + filename/citation check) |
-| 32 | **Figma** | Hierarchical metadata filtering (permissions, team spaces, version control status) | 🔲 TODO (Document version precedence & superseding) |
-| 33 | **Canva** | Multi-modal asset/design token retrieval with permission-aware metadata | ✅ Partial (RBAC metadata) |
-| 34 | **Cloudflare** | Edge Queues async ingestion + FTS5 + Vectorize + deterministic fallback/error boundaries | 🔲 TODO (Circuit Breakers for Ollama/DuckDuckGo) |
-| 35 | **Datadog** | Embedding latency tracking, dimensionality vs. cost, token & leakage telemetry | 🔲 TODO (`GET /metrics` Prometheus/p95/p99 endpoint) |
-| 36 | **Atlassian** | Nested Confluence/Jira doc parsing, webhook freshness, strict ACL boundaries | 🔲 TODO (Multi-turn session memory & Jira/MD nesting) |
-| 37 | **Salesforce** | Relational schema + enriched indexing lifting retrieval accuracy | ✅ Partial |
-| 38 | **Zendesk** | Transitioning keyword search to bi-encoder semantic search trained on user clicks | 🔲 TODO (User feedback thumbs-up/down logging) |
-| 39 | **HubSpot** | Vector-as-a-Service (VaaS) over Qdrant, weighted reranking, automated ACLs | ✅ Partial |
-| 40 | **Twilio** | Production LLM-as-a-Judge alignment against human expectations | 🔲 TODO (LLM-as-a-Judge scoring in `benchmark.py`) |
+| 28 | **Notion** | Dual-path ingestion (Spark batch + Kafka/Debezium CDC streaming) + tenant shards | ✅ Implemented (`POST /ingest-async`, `POST /ingest/cdc`, tenant shards) |
+| 29 | **Stripe** | *Kai* hybrid RAG + tool-calling with sub-200ms incremental index updates | ✅ Implemented (Hybrid RAG + SQL/MCP tools + CDC upserts) |
+| 30 | **Shopify** | Change Data Capture (CDC) ingestion for semi-structured catalog schemas | ✅ Implemented (`POST /ingest/cdc` incremental upsert/delete) |
+| 31 | **Dropbox** | *Dropbox Dash*: human-calibrated LLM-as-a-judge to catch hallucinated filenames | ✅ Implemented (`judge.py` filename/citation audit + human calibration) |
+| 32 | **Figma** | Hierarchical metadata filtering (permissions, team spaces, version control status) | ✅ Implemented (Pre-filtered RBAC + `version_boost` + CDC superseding) |
+| 33 | **Canva** | Multi-modal asset/design token retrieval with permission-aware metadata | ✅ Implemented (RBAC metadata + PDF/table/code extraction) |
+| 34 | **Cloudflare** | Edge Queues async ingestion + FTS5 + Vectorize + deterministic fallback/error boundaries | ✅ Implemented (`CircuitBreaker` for Ollama/DDG + RabbitMQ fallback) |
+| 35 | **Datadog** | Embedding latency tracking, dimensionality vs. cost, token & leakage telemetry | ✅ Implemented (`/metrics`, `/metrics/prometheus`, p50/p95/p99, prefix tokens) |
+| 36 | **Atlassian** | Nested Confluence/Jira doc parsing, webhook freshness, strict ACL boundaries | ✅ Implemented (Multi-turn session memory + MD nesting + CDC freshness) |
+| 37 | **Salesforce** | Relational schema + enriched indexing lifting retrieval accuracy | ✅ Implemented (SQL inventory tool + Contextual/AST enriched indexing) |
+| 38 | **Zendesk** | Transitioning keyword search to bi-encoder semantic search trained on user clicks | ✅ Implemented (`POST/GET /feedback` thumbs-up/down + Prometheus KPIs) |
+| 39 | **HubSpot** | Vector-as-a-Service (VaaS) over Qdrant, weighted reranking, automated ACLs | ✅ Implemented (Weighted Tri-Modal RRF + automated RBAC pre-filtering) |
+| 40 | **Twilio** | Production LLM-as-a-Judge alignment against human expectations | ✅ Implemented (`run_human_calibration_check()` in `judge.py` & `benchmark.py`) |
 
 ### E. FinTech, Legal & Regulated Enterprise (10 Companies)
 | # | Company | Key Production RAG Pattern from Tech Blog | Status in Our Repo |
 | :- | :--- | :--- | :--- |
-| 41 | **Rippling** | **Eval-Driven Development (EDD)**: smoke evals on every commit, cost-uncertainty-lag | ✅ Implemented (Pytest + 5-mode ablation; add CI workflow) |
-| 42 | **Bloomberg** | *EvidenT* provable source traceability + RAG Safety & Risk Taxonomies | ✅ Partial (Needs span-level exact quote highlighting) |
-| 43 | **Capital One** | Platform-first governance + *FB-RAG* (Forward-Backward RAG for constraints) | 🔲 TODO (Cyclic self-correction / FB lookahead) |
-| 44 | **JPMorgan Chase** | Regulated financial compliance, strict data lineage & auditability | 🔲 TODO (Immutable audit log for every query & doc) |
-| 45 | **Ramp** | Auditable RAG grounding classification in verifiable rules & data lineage | 🔲 TODO (Structured JSON schema / rule-grounded mode) |
-| 46 | **Thomson Reuters** | Legal two-stage bi-encoder + cross-encoder separating retrieval vs. generation evals | ✅ Implemented |
-| 47 | **Plaid** | Regulated fintech data security & compliance-constrained retrieval | ✅ Partial |
-| 48 | **Block** | *Labeled Queries* sidecar vector store (vetted human queries take priority over raw logs) | 🔲 TODO (Vetted Golden QA sidecar cache) |
+| 41 | **Rippling** | **Eval-Driven Development (EDD)**: smoke evals on every commit, cost-uncertainty-lag | ✅ Implemented (`.github/workflows/edd.yml` + 50 TDD & 5-mode ablation tests) |
+| 42 | **Bloomberg** | *EvidenT* provable source traceability + RAG Safety & Risk Taxonomies | ✅ Implemented (`CitationItem` exact quote extraction + OWASP guardrails) |
+| 43 | **Capital One** | Platform-first governance + *FB-RAG* (Forward-Backward RAG for constraints) | ✅ Implemented (Cyclic Self-RAG retry loop + governance audit dossier) |
+| 44 | **JPMorgan Chase** | Regulated financial compliance, strict data lineage & auditability | ✅ Implemented (Tamper-evident SHA-256 hash-chained audit ledger + GDPR Art. 17) |
+| 45 | **Ramp** | Auditable RAG grounding classification in verifiable rules & data lineage | ✅ Implemented (`POST /query-structured` verifiable rules + audit hash) |
+| 46 | **Thomson Reuters** | Legal two-stage bi-encoder + cross-encoder separating retrieval vs. generation evals | ✅ Implemented (IR ablation metrics + P2.1 Judge generation audit) |
+| 47 | **Plaid** | Regulated fintech data security & compliance-constrained retrieval | ✅ Implemented (RBAC isolation + PII redaction + compliance audit page) |
+| 48 | **Block** | *Labeled Queries* sidecar vector store (vetted human queries take priority over raw logs) | ✅ Implemented (`labeled_queries.py` vetted Golden QA sidecar) |
 | 49 | **Square** | Cosine similarity over domain embeddings for item/intent matching | ✅ Implemented |
 | 50 | **Monzo** | Lightweight precomputed vector distance serving for fast help-center retrieval | ✅ Implemented |
 
