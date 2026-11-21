@@ -81,40 +81,40 @@
 ## 2. Prioritized Project TODO Roadmap (Mapped to Our Codebase)
 
 ### P0 — High-Impact Retrieval & Agent Reliability (Interview Differentiators)
-- [ ] **P0.1 Cyclic Self-Correction in LangGraph** (`backend/app/agent/graph.py`, `nodes.py`)
+- [x] **P0.1 Cyclic Self-Correction in LangGraph** (`backend/app/agent/graph.py`, `nodes.py`)
   - *Inspired by:* **Uber (Genie)**, **Capital One (FB-RAG)**
-  - Add a cyclic conditional edge after `verify_faithfulness_self_rag`: if `faithfulness_score < 0.75` and `retry_count < 2`, broaden `top_k`, rewrite the query using critique feedback, and loop back to `retrieve_and_rerank`.
-- [ ] **P0.2 Negation-Aware Reranking & MMR Diversity + Lost-in-the-Middle Reordering** (`backend/app/retrieval/postprocessor.py`)
+  - Implemented cyclic conditional edge after `verify_faithfulness_self_rag`: when `faithfulness_score < 0.75` and `retry_count < max_retries`, broadens `top_k`, rewrites the query using critique feedback, and loops back to `retrieve_and_rerank`.
+- [x] **P0.2 Negation-Aware Reranking & MMR Diversity + Lost-in-the-Middle Reordering** (`backend/app/retrieval/postprocessor.py`)
   - *Inspired by:* **Grab**, **OpenAI**, **Cursor**
-  - Add Maximal Marginal Relevance (MMR) deduplication to prevent near-duplicate chunks from consuming top-$k$ slots, U-shaped Lost-in-the-Middle reordering (`[Rank 1, Rank 3, ..., Rank 2]`), and explicit negation penalty detection.
-- [ ] **P0.3 Table-Header & Code-Block-Aware Chunking + Optional LLM Contextualizer** (`backend/app/ingestion/chunking.py`)
-  - *Inspired by:* **Anthropic**, **NVIDIA**, **Cursor**, **Atlassian**
-  - Preserve Markdown table headers across split boundaries and keep fenced code blocks intact; add an optional Anthropic-style LLM contextual summary prefix during ingestion.
-- [ ] **P0.4 Multi-Turn Conversational Memory & Coreference Resolution** (`backend/app/memory/conversation.py`)
+  - Implemented Maximal Marginal Relevance (MMR) deduplication, U-shaped Lost-in-the-Middle reordering (`[Rank 1, Rank 3, ..., Rank 2]`), and explicit negation penalty detection.
+- [x] **P0.3 Table-Header & Code-Block-Aware Chunking + Optional Contextualizer** (`backend/app/ingestion/chunking.py`)
+  - *Inspired by:* **Anthropic**, **NVIDIA**, **Cursor**, **GitHub**, **Atlassian**
+  - Preserves Markdown table headers across split boundaries, keeps fenced code blocks atomic (ignoring `#` comments inside fences), extracts Python AST + polyglot code symbols (`code_symbols`, `code_languages`), and supports optional Anthropic-style contextual document prefixes (`enable_contextual_enrichment`).
+- [x] **P0.4 Multi-Turn Conversational Memory & Coreference Resolution** (`backend/app/memory/conversation.py`)
   - *Inspired by:* **Booking.com**, **Lyft (AI Assist)**
-  - Add `session_id` sliding-window memory that resolves pronouns (`"it"`, `"its remediation"`, `"that error"`) into standalone queries before retrieval.
+  - Implemented `session_id` sliding-window memory resolving pronouns (`"it"`, `"its remediation"`, `"that error"`) into standalone queries before retrieval.
 
 ### P1 — Production Operations, Observability & Compliance
-- [ ] **P1.1 Circuit Breakers + `GET /metrics` (p50/p95/p99, Cache Hit Rate, Error Rate)** (`backend/app/observability/`)
+- [x] **P1.1 Circuit Breakers + `GET /metrics` & `/metrics/prometheus` (p50/p95/p99, Cache Hit Rate, Error Rate)** (`backend/app/observability/`)
   - *Inspired by:* **Cloudflare**, **Datadog**, **AWS**
-  - Wrap Ollama & DuckDuckGo calls with a `CLOSED -> OPEN -> HALF_OPEN` circuit breaker and expose Prometheus/JSON latency & guardrail metrics at `GET /metrics`.
-- [ ] **P1.2 GDPR Surgical Deletion (`DELETE /documents/{doc_id}`) & Version Precedence** (`backend/main.py`, `hybrid.py`)
-  - *Inspired by:* **Figma**, **Notion**, **JPMorgan Chase**
-  - Delete a single `doc_id` across Dense, BM25, Entity Graph, and Semantic Cache, and add `version` / `updated_at` recency weighting in RRF so newer docs outrank deprecated specs.
-- [ ] **P1.3 Async Ingestion Queue (`rag_ingestion_jobs`)** (`backend/app/worker/consumer.py`)
+  - Wrapped Ollama & DuckDuckGo calls with `CLOSED -> OPEN -> HALF_OPEN` circuit breakers and exposed JSON + Prometheus latency, guardrail, feedback, and corpus metrics.
+- [x] **P1.2 GDPR Surgical Deletion (`DELETE /documents/{doc_id}`), Freshness Decay & CDC Upserts (`POST /ingest/cdc`)** (`backend/main.py`, `hybrid.py`, `pipeline.py`)
+  - *Inspired by:* **Figma**, **Notion**, **Shopify**, **Reddit**, **Yelp**, **JPMorgan Chase**
+  - Deletes a single `doc_id` across Dense, BM25, Entity Graph, and Semantic Cache, supports atomic `external_id` CDC upserts/deletes, and applies exponential freshness time-decay + version precedence boosts in RRF scoring.
+- [x] **P1.3 Async Ingestion Queue (`rag_ingestion_jobs`)** (`backend/app/worker/consumer.py`)
   - *Inspired by:* **Cloudflare**, **Notion**, **AWS**
-  - Offload heavy batch/PDF ingestion to RabbitMQ so `POST /ingest-async` returns a `job_id` immediately without blocking FastAPI workers.
-- [ ] **P1.4 Negation & PII-Safe Audit Logging** (`backend/app/guardrails/audit.py`)
-  - *Inspired by:* **Bloomberg**, **Ramp**, **JPMorgan Chase**
-  - Emit structured, PII-redacted audit records linking every generated response to exact `doc_id`, `chunk_id`, and `user_roles`.
+  - Offloads heavy ingestion to RabbitMQ (`POST /ingest-async`) with local thread fallback.
+- [x] **P1.4 PII-Safe Tamper-Evident Audit Logging & User Feedback Loop** (`backend/app/guardrails/audit.py`, `backend/app/observability/feedback.py`)
+  - *Inspired by:* **Bloomberg**, **Ramp**, **Zendesk**, **JPMorgan Chase**
+  - Emits SHA-256 hash-chained, PII-redacted audit records linking responses to exact `doc_id`, `chunk_id`, and `user_roles`, plus `POST /feedback` & `GET /feedback` satisfaction tracking.
 
 ### P2 — Evaluation, Calibration & Ecosystem Integration
-- [ ] **P2.1 LLM-as-a-Judge & Human-Calibrated Evals in `benchmark.py`**
+- [x] **P2.1 LLM-as-a-Judge & Human-Calibrated Evals in `benchmark.py` & `judge.py`**
   - *Inspired by:* **Booking.com**, **Dropbox**, **Twilio**, **NVIDIA**
-  - Add optional local Ollama / OpenAI-compatible Judge scoring for Faithfulness & Answer Relevance alongside IR metrics (`HitRate@K`, `MRR@K`, `NDCG@K`).
-- [ ] **P2.2 GitHub Actions CI Eval-Driven Development (EDD) Gate** (`.github/workflows/edd.yml`)
+  - Added Faithfulness, Answer Relevance, and Dropbox-style filename/citation hallucination verification with optional local Ollama Judge, deterministic rubric fallback, and 4-case Human-Calibration Agreement check in `POST /evaluate` and Gradio Tab 3.
+- [x] **P2.2 GitHub Actions CI Eval-Driven Development (EDD) Gate** (`.github/workflows/edd.yml`)
   - *Inspired by:* **Rippling**
-  - Run `pytest` + the 5-mode ablation benchmark on every PR and fail if `MRR@3` or `HitRate@3` regresses.
-- [ ] **P2.3 Expose RAG Engine as an MCP (Model Context Protocol) Server & Labeled-Query Sidecar**
-  - *Inspired by:* **Expedia Group**, **Block**
-  - Expose `retrieve_hybrid` and `ingest_document` as MCP tools and add a vetted "Labeled Queries" sidecar store for high-frequency head queries (**Instacart**, **Block**).
+  - Runs `pytest` + the 5-mode ablation benchmark gate on every PR and fails if `MRR@3` or `HitRate@3` regresses.
+- [x] **P2.3 MCP Server, Labeled-Query Sidecar & Inverted RAG Structured Classification** (`backend/mcp_server.py`, `labeled_queries.py`, `structured.py`)
+  - *Inspired by:* **Expedia Group**, **Block**, **Instacart**, **DoorDash**, **Ramp**
+  - Exposes RBAC-scoped MCP tools (`retrieve_hybrid`, `ingest_document`, `gdpr_erase_document`), a vetted Labeled Queries sidecar cache, and `POST /query-structured` constrained taxonomy / rule-grounded JSON output.

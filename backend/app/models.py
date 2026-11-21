@@ -241,3 +241,32 @@ class EvaluationRequest(BaseModel):
         default=False,
         description="Blend local Ollama judge scores when reachable (falls back cleanly to deterministic rubric).",
     )
+
+
+class StructuredQueryRequest(BaseModel):
+    """DoorDash Inverted RAG + Ramp Rule-Grounded Structured JSON query request."""
+
+    text: str = Field(..., min_length=1, max_length=2000)
+    allowed_labels: List[str] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="Constrained taxonomy enum values permitted for classification_label.",
+    )
+    retrieval_mode: RetrievalMode = Field(default="hybrid_graph_rerank")
+    top_k: int = Field(default=5, ge=1, le=20)
+    tenant_id: str = Field(default="default")
+    user_roles: List[str] = Field(default_factory=lambda: ["public", "engineering", "compliance"])
+
+
+class StructuredQueryResponse(BaseModel):
+    """Strictly typed Pydantic response constraining classification to allowed_labels with verifiable rules."""
+
+    classification_label: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    candidate_label_scores: Dict[str, float]
+    rationale: str
+    verifiable_rules_matched: List[str] = Field(default_factory=list)
+    extracted_entities: List[str] = Field(default_factory=list)
+    citations: List[CitationItem] = Field(default_factory=list)
+    audit_event_hash: str
