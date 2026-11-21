@@ -199,3 +199,11 @@ class EvaluationRequest(BaseModel):
         default=True,
         description="Ensure the golden technical benchmark documents are indexed before evaluating.",
     )
+    enable_judge_eval: bool = Field(
+        default=False,
+        description="Run P2.1 LLM-as-a-Judge faithfulness, hallucination audit, and human calibration check.",
+    )
+    use_llm_judge: bool = Field(
+        default=False,
+        description="Blend local Ollama judge scores when reachable (falls back cleanly to deterministic rubric).",
+    )
