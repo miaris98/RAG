@@ -19,6 +19,7 @@ from app.retrieval.embeddings import ModelRegistry
 from app.retrieval.entity_graph import entity_graph, extract_entities
 from app.retrieval.postprocessor import context_postprocessor
 from app.retrieval.reranker import CrossEncoderReranker, tokenize_content_words
+from app.retrieval.semantic_ids import compute_semantic_id, compute_shard_id
 
 
 class PurePythonBM25Okapi:
@@ -83,6 +84,8 @@ class HybridRetrievalEngine:
         self._chunks_by_id: Dict[str, ChunkRecord] = {}
         self._chunk_order: List[str] = []
         self._dense_vectors: Dict[str, List[float]] = {}
+        self._shard_index: Dict[str, Set[str]] = {}
+        self._semantic_clusters: Dict[str, Set[str]] = {}
         self._bm25 = None
         self._reranker = CrossEncoderReranker(relevance_threshold=settings.relevance_threshold)
         self._milvus_connected: bool = False
@@ -139,9 +142,13 @@ class HybridRetrievalEngine:
 
             for chk, vec in zip(new_chunks, vectors):
                 chk.entities = entity_graph.add_chunk(chk.chunk_id, chk.parent_content)
+                chk.semantic_id = compute_semantic_id(f"{chk.title} {chk.content}", vec, chk.entities)
+                chk.shard_id = compute_shard_id(chk.tenant_id, chk.doc_id)
                 self._chunks_by_id[chk.chunk_id] = chk
                 self._chunk_order.append(chk.chunk_id)
                 self._dense_vectors[chk.chunk_id] = vec
+                self._shard_index.setdefault(chk.shard_id, set()).add(chk.chunk_id)
+                self._semantic_clusters.setdefault(chk.semantic_id, set()).add(chk.chunk_id)
 
             self._rebuild_bm25()
             self._push_to_milvus(new_chunks)
@@ -262,22 +269,43 @@ class HybridRetrievalEngine:
         except Exception:
             pass
 
-    def _authorized_chunk_ids(self, tenant_id: str, user_roles: Optional[List[str]]) -> Set[str]:
-        """Stage 0 Pre-Filter: Computes the exact set of chunk_ids authorized for (tenant_id, user_roles)."""
+    def _authorized_chunk_ids(
+        self,
+        tenant_id: str,
+        user_roles: Optional[List[str]],
+        semantic_id_prefix: Optional[str] = None,
+    ) -> Tuple[Set[str], List[str], int]:
+        """Stage 0 Pre-Filter + Airbnb Tenant Shard Routing + Optional Spotify Semantic ID Filter."""
         if user_roles is None:
             caller_roles = {"public", "engineering", "compliance"}
         else:
             caller_roles = {r.strip().lower() for r in user_roles if r and r.strip()}
 
+        # Route strictly to shards belonging to tenant_id (pruning foreign tenant shards)
+        tenant_prefix = f"shard_{tenant_id.strip().lower().replace('-', '_')}_"
+        routed_shards = sorted(s for s in self._shard_index if s.startswith(tenant_prefix) and self._shard_index[s])
+        total_nonempty_shards = sum(1 for s in self._shard_index.values() if s)
+        pruned_shards_count = max(0, total_nonempty_shards - len(routed_shards))
+
+        candidate_cids: Set[str] = set()
+        if routed_shards:
+            for shard_name in routed_shards:
+                candidate_cids.update(self._shard_index[shard_name])
+        else:
+            candidate_cids = {cid for cid, chk in self._chunks_by_id.items() if chk.tenant_id == tenant_id}
+
+        prefix_clean = (semantic_id_prefix or "").strip().lower()
         authorized: Set[str] = set()
-        for cid in self._chunk_order:
-            chk = self._chunks_by_id[cid]
-            if chk.tenant_id != tenant_id:
+        for cid in candidate_cids:
+            chk = self._chunks_by_id.get(cid)
+            if chk is None or chk.tenant_id != tenant_id:
+                continue
+            if prefix_clean and not chk.semantic_id.lower().startswith(prefix_clean):
                 continue
             chunk_roles = {r.strip().lower() for r in chk.access_roles}
             if chunk_roles & caller_roles:
                 authorized.add(cid)
-        return authorized
+        return authorized, routed_shards, pruned_shards_count
 
     def retrieve(
         self,
@@ -290,8 +318,9 @@ class HybridRetrievalEngine:
         dense_weight: float = settings.dense_weight,
         sparse_weight: float = settings.sparse_weight,
         graph_weight: float = 0.85,
+        semantic_id_prefix: Optional[str] = None,
     ) -> List[RetrievedChunk]:
-        """Executes pre-filtered RBAC + Tri-Modal retrieval + RRF + Cross-Encoder Reranking."""
+        """Executes pre-filtered RBAC + Tenant Shard Routing + Tri-Modal retrieval + RRF + Reranking."""
         self._hydrate_from_milvus_if_empty()
 
         with self._lock:
@@ -301,6 +330,8 @@ class HybridRetrievalEngine:
                 self._last_funnel = {
                     "total_corpus_chunks": 0,
                     "rbac_authorized_chunks": 0,
+                    "routed_shards": [],
+                    "pruned_shards_count": 0,
                     "dense_candidates_count": 0,
                     "sparse_candidates_count": 0,
                     "graph_candidates_count": 0,
@@ -315,12 +346,16 @@ class HybridRetrievalEngine:
                 return []
 
             t_rbac = time.perf_counter()
-            authorized_ids = self._authorized_chunk_ids(tenant_id, user_roles)
+            authorized_ids, routed_shards, pruned_shards_count = self._authorized_chunk_ids(
+                tenant_id, user_roles, semantic_id_prefix=semantic_id_prefix
+            )
             substage_latencies["rbac_prefilter_ms"] = round((time.perf_counter() - t_rbac) * 1000.0, 3)
             if not authorized_ids:
                 self._last_funnel = {
                     "total_corpus_chunks": total_corpus,
                     "rbac_authorized_chunks": 0,
+                    "routed_shards": routed_shards,
+                    "pruned_shards_count": pruned_shards_count,
                     "dense_candidates_count": 0,
                     "sparse_candidates_count": 0,
                     "graph_candidates_count": 0,
@@ -484,6 +519,8 @@ class HybridRetrievalEngine:
                         },
                         freshness_boost=freshness_boost,
                         version_boost=version_boost,
+                        semantic_id=record.semantic_id,
+                        shard_id=record.shard_id,
                     )
                 )
 
@@ -557,6 +594,9 @@ class HybridRetrievalEngine:
             self._last_funnel = {
                 "total_corpus_chunks": total_corpus,
                 "rbac_authorized_chunks": len(authorized_ids),
+                "routed_shards": routed_shards,
+                "pruned_shards_count": pruned_shards_count,
+                "semantic_clusters_hit": sorted({c.semantic_id for c in final_chunks if c.semantic_id}),
                 "dense_candidates_count": len(dense_ranks_per_chunk),
                 "sparse_candidates_count": len(sparse_ranks_per_chunk),
                 "graph_candidates_count": len(graph_ranks_per_chunk),
@@ -589,12 +629,33 @@ class HybridRetrievalEngine:
             if not to_remove:
                 return 0
             for cid in to_remove:
-                self._chunks_by_id.pop(cid, None)
+                chk_old = self._chunks_by_id.pop(cid, None)
                 self._dense_vectors.pop(cid, None)
+                if chk_old:
+                    if chk_old.shard_id in self._shard_index:
+                        self._shard_index[chk_old.shard_id].discard(cid)
+                        if not self._shard_index[chk_old.shard_id]:
+                            self._shard_index.pop(chk_old.shard_id, None)
+                    if chk_old.semantic_id in self._semantic_clusters:
+                        self._semantic_clusters[chk_old.semantic_id].discard(cid)
+                        if not self._semantic_clusters[chk_old.semantic_id]:
+                            self._semantic_clusters.pop(chk_old.semantic_id, None)
             self._chunk_order = [cid for cid in self._chunk_order if cid not in to_remove]
             entity_graph.remove_chunks(to_remove)
             self._rebuild_bm25()
             return len(to_remove)
+
+    def get_shards_and_clusters(self) -> Dict[str, Any]:
+        """Returns active tenant shard buckets and Spotify-style Semantic ID cluster distributions."""
+        with self._lock:
+            shards = {name: len(cids) for name, cids in sorted(self._shard_index.items()) if cids}
+            clusters = {sid: len(cids) for sid, cids in sorted(self._semantic_clusters.items()) if cids}
+            return {
+                "total_shards": len(shards),
+                "shards": shards,
+                "total_semantic_clusters": len(clusters),
+                "semantic_clusters": clusters,
+            }
 
     def stats(self) -> dict:
         with self._lock:
@@ -647,6 +708,8 @@ class HybridRetrievalEngine:
             self._chunks_by_id.clear()
             self._chunk_order.clear()
             self._dense_vectors.clear()
+            self._shard_index.clear()
+            self._semantic_clusters.clear()
             self._bm25 = None
             entity_graph.clear()
 

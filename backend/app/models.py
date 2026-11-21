@@ -90,6 +90,8 @@ class ChunkRecord(BaseModel):
     token_estimate: int = 0
     chunking_strategy: str = "parent_child"
     entities: List[str] = Field(default_factory=list)
+    semantic_id: str = ""
+    shard_id: str = ""
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -121,6 +123,8 @@ class RetrievedChunk(BaseModel):
     rrf_breakdown: Dict[str, float] = Field(default_factory=dict)
     freshness_boost: float = 1.0
     version_boost: float = 1.0
+    semantic_id: str = ""
+    shard_id: str = ""
     prompt_position: Optional[int] = None
 
 
@@ -193,6 +197,10 @@ class RetrieveDebugRequest(BaseModel):
     top_k: int = Field(default=5, ge=1, le=20)
     tenant_id: str = "default"
     user_roles: List[str] = Field(default_factory=lambda: ["public", "engineering", "compliance"])
+    semantic_id_prefix: Optional[str] = Field(
+        default=None,
+        description="Optional Spotify-style hierarchical Semantic ID prefix filter (e.g. 'sem.payments').",
+    )
 
 
 class PipelineTrace(BaseModel):
