@@ -19,11 +19,14 @@ from app.evaluation.benchmark import run_ablation_benchmark
 from app.guardrails.audit import audit_logger
 from app.ingestion.pipeline import ingestion_pipeline
 from app.models import (
+    CDCEventRequest,
     DocumentInput,
     EvaluationRequest,
     QueryInput,
     RetrieveDebugRequest,
+    UserFeedbackRequest,
 )
+from app.observability.feedback import feedback_store
 from app.observability.metrics import metrics_collector
 from app.observability.tracing import trace_collector
 from app.retrieval.embeddings import ModelRegistry
@@ -209,18 +212,58 @@ async def get_compliance_audit_report(limit: int = 50):
         "active_documents_count": len(docs),
     }
 
+    fb_summary = feedback_store.summary(limit=20)
     return {
         "generated_at_utc": generated_utc,
         "chain_valid": audit_data["chain_valid"],
         "head_hash": audit_data["head_hash"],
         "total_audit_events": audit_data["total_events"],
         "gdpr_compliance_summary": gdpr_summary,
+        "feedback_summary": fb_summary,
         "metrics_snapshot": metrics_snap,
         "document_inventory": docs,
         "recent_traces": traces_data["traces"],
         "audit_events": audit_data["events"],
         "markdown_dossier": "\n".join(lines),
     }
+
+
+@app.post("/ingest/cdc")
+async def ingest_cdc_webhook(event: CDCEventRequest):
+    """Shopify/Notion-style CDC incremental upsert/delete endpoint keyed by external_id."""
+    try:
+        return ingestion_pipeline.process_cdc_event(event)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"CDC event processing failed: {exc}") from exc
+
+
+@app.post("/feedback")
+async def record_user_feedback(req: UserFeedbackRequest):
+    """Zendesk-style thumbs-up/down feedback endpoint tied to trace_id and retrieved chunk_ids."""
+    entry = feedback_store.record(
+        rating=req.rating,
+        query=req.query,
+        trace_id=req.trace_id,
+        chunk_ids=req.chunk_ids,
+        user_roles=req.user_roles,
+        comment=req.comment,
+    )
+    audit_logger.log_event(
+        event_type="user_feedback_recorded",
+        actor_roles=req.user_roles,
+        chunk_ids=req.chunk_ids,
+        summary=f"User rated response '{req.rating}' for query '{req.query[:80]}'",
+        metadata={"feedback_id": entry["feedback_id"], "trace_id": req.trace_id, "rating": req.rating},
+    )
+    return {"status": "recorded", "feedback": entry, "summary": feedback_store.summary(limit=5)}
+
+
+@app.get("/feedback")
+async def get_user_feedback_summary(limit: int = 25):
+    """Returns rolling user satisfaction KPIs and recent thumbs-up/down feedback entries."""
+    return feedback_store.summary(limit=limit)
 
 
 @app.post("/ingest-sample")

@@ -178,6 +178,20 @@ class MetricsCollector:
                 f'rag_circuit_breaker_open{{service="ollama_llm"}} {llm_open}',
                 f'rag_circuit_breaker_open{{service="duckduckgo_web"}} {web_open}',
             ]
+        from app.observability.feedback import feedback_store
+
+        fb = feedback_store.summary(limit=1)
+        lines.extend(
+            [
+                "# HELP rag_user_feedback_total Total thumbs-up and thumbs-down user feedback ratings.",
+                "# TYPE rag_user_feedback_total counter",
+                f'rag_user_feedback_total{{rating="up"}} {fb["thumbs_up"]}',
+                f'rag_user_feedback_total{{rating="down"}} {fb["thumbs_down"]}',
+                "# HELP rag_user_satisfaction_rate Rolling user thumbs-up satisfaction ratio [0.0, 1.0].",
+                "# TYPE rag_user_satisfaction_rate gauge",
+                f'rag_user_satisfaction_rate {fb["satisfaction_rate"]}',
+            ]
+        )
         return "\n".join(lines) + "\n"
 
 

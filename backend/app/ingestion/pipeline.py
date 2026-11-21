@@ -6,7 +6,7 @@ from typing import Dict, List
 from app.guardrails.audit import audit_logger
 from app.guardrails.security import guardrails
 from app.ingestion.chunking import ChunkingEngine
-from app.models import DocumentInput
+from app.models import CDCEventRequest, DocumentInput
 from app.retrieval.hybrid import retrieval_engine
 from app.retrieval.semantic_cache import semantic_cache
 
@@ -72,6 +72,12 @@ class IngestionPipeline:
         if doc_input.apply_guardrails:
             content_to_index, guardrail_flags = guardrails.sanitize_text(content_to_index)
 
+        enriched_meta = dict(doc_input.metadata or {})
+        enriched_meta.setdefault("version", doc_input.version)
+        enriched_meta["updated_at"] = float(
+            doc_input.updated_at if doc_input.updated_at is not None else time.time()
+        )
+
         chunks = self.chunker.chunk_document(
             content=content_to_index,
             title=doc_input.title,
@@ -79,7 +85,7 @@ class IngestionPipeline:
             strategy=doc_input.chunking_strategy,
             tenant_id=doc_input.tenant_id,
             access_roles=doc_input.access_roles,
-            extra_metadata=doc_input.metadata,
+            extra_metadata=enriched_meta,
             enable_contextual_enrichment=doc_input.enable_contextual_enrichment,
         )
         added, skipped = retrieval_engine.add_chunks(chunks)
@@ -126,6 +132,74 @@ class IngestionPipeline:
             "parent_windows_count": len(parent_ids),
             "ingestion_latency_ms": elapsed_ms,
             "corpus_stats": retrieval_engine.stats(),
+        }
+
+    def process_cdc_event(self, event: CDCEventRequest) -> dict:
+        """Shopify/Notion-style incremental CDC handler: atomically supersedes or deletes by external_id."""
+        superseded_doc_ids = retrieval_engine.find_doc_ids_by_external_id(
+            external_id=event.external_id, tenant_id=event.tenant_id
+        )
+        deleted_chunks = 0
+        invalidated_cache = 0
+        for old_id in superseded_doc_ids:
+            deleted_chunks += retrieval_engine.delete_by_doc_id(old_id)
+            invalidated_cache += semantic_cache.invalidate_by_doc_id(old_id)
+
+        if event.action == "delete":
+            audit_logger.log_event(
+                event_type="cdc_delete",
+                actor_tenant=event.tenant_id,
+                actor_roles=event.access_roles,
+                doc_ids=superseded_doc_ids,
+                summary=f"CDC delete for external_id='{event.external_id}' ({deleted_chunks} chunks removed)",
+                metadata={"external_id": event.external_id, "deleted_chunks": deleted_chunks},
+            )
+            return {
+                "status": "success",
+                "action": "delete",
+                "external_id": event.external_id,
+                "superseded_doc_ids": superseded_doc_ids,
+                "deleted_chunks": deleted_chunks,
+                "invalidated_cache_entries": invalidated_cache,
+                "corpus_stats": retrieval_engine.stats(),
+            }
+
+        if not event.content or not event.content.strip():
+            raise ValueError("CDC upsert requires non-empty content.")
+
+        merged_meta = dict(event.metadata or {})
+        merged_meta["external_id"] = event.external_id
+        ingest_res = self.ingest(
+            DocumentInput(
+                content=event.content,
+                title=event.title,
+                source=event.source,
+                chunking_strategy=event.chunking_strategy,
+                tenant_id=event.tenant_id,
+                access_roles=event.access_roles,
+                version=event.version,
+                updated_at=event.updated_at,
+                enable_contextual_enrichment=event.enable_contextual_enrichment,
+                metadata=merged_meta,
+            )
+        )
+        audit_logger.log_event(
+            event_type="cdc_upsert",
+            actor_tenant=event.tenant_id,
+            actor_roles=event.access_roles,
+            doc_ids=[ingest_res["doc_id"]] if ingest_res.get("doc_id") else [],
+            summary=(
+                f"CDC upsert external_id='{event.external_id}' v{event.version} "
+                f"(superseded {len(superseded_doc_ids)} prior docs)"
+            ),
+            metadata={"external_id": event.external_id, "superseded_doc_ids": superseded_doc_ids},
+        )
+        return {
+            **ingest_res,
+            "action": "upsert",
+            "external_id": event.external_id,
+            "superseded_doc_ids": superseded_doc_ids,
+            "deleted_chunks": deleted_chunks,
         }
 
     def ingest_sample_corpus(self, strategy: str = "parent_child") -> dict:
