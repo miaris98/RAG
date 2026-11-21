@@ -13,7 +13,7 @@ import time
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import PlainTextResponse, StreamingResponse
 
-from app.agent.graph import stream_rag_pipeline_sse
+from app.agent.graph import execute_rag_pipeline, stream_rag_pipeline_sse
 from app.agent.structured import execute_structured_taxonomy_query
 from app.config import settings
 from app.evaluation.benchmark import run_ablation_benchmark
@@ -23,6 +23,7 @@ from app.models import (
     CDCEventRequest,
     DocumentInput,
     EvaluationRequest,
+    PrewarmCacheRequest,
     QueryInput,
     RetrieveDebugRequest,
     StructuredQueryRequest,
@@ -35,6 +36,7 @@ from app.observability.tracing import trace_collector
 from app.retrieval.embeddings import ModelRegistry
 from app.retrieval.hybrid import retrieval_engine
 from app.retrieval.labeled_queries import labeled_query_store
+from app.retrieval.prefix_cache import prefix_cache
 from app.retrieval.semantic_cache import semantic_cache
 from app.worker.consumer import (
     enqueue_ingestion_job,
@@ -393,6 +395,61 @@ async def query_structured_taxonomy(req: StructuredQueryRequest):
         return execute_structured_taxonomy_query(req)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Structured query failed: {exc}") from exc
+
+
+@app.post("/cache/prewarm")
+async def prewarm_head_query_cache(req: PrewarmCacheRequest = PrewarmCacheRequest()):
+    """#22 Instacart offline head-query cache pre-warming into role-scoped Semantic & Prefix Caches."""
+    t0 = time.perf_counter()
+    prewarmed = 0
+    already_cached = 0
+    for q_text in req.queries:
+        if not q_text or not q_text.strip():
+            continue
+        out = execute_rag_pipeline(
+            QueryInput(
+                text=q_text.strip(),
+                tenant_id=req.tenant_id,
+                user_roles=req.user_roles,
+                retrieval_mode=req.retrieval_mode,
+                top_k=req.top_k,
+                enable_web_search=False,
+                enable_semantic_cache=True,
+                max_retries=0,
+            )
+        )
+        if out.get("trace", {}).get("cache_hit"):
+            already_cached += 1
+        else:
+            prewarmed += 1
+
+    elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+    audit_logger.log_event(
+        event_type="cache_prewarmed",
+        actor_tenant=req.tenant_id,
+        actor_roles=req.user_roles,
+        summary=f"Pre-warmed {prewarmed} head queries ({already_cached} already cached) in {elapsed_ms}ms",
+        metadata={"prewarmed_count": prewarmed, "already_cached_count": already_cached},
+    )
+    return {
+        "status": "success",
+        "prewarmed_count": prewarmed,
+        "already_cached_count": already_cached,
+        "total_latency_ms": elapsed_ms,
+        "cache_stats": {
+            "semantic_cache": semantic_cache.stats(),
+            "prefix_cache": prefix_cache.stats(),
+        },
+    }
+
+
+@app.get("/cache/stats")
+async def get_cache_statistics():
+    """Returns combined Semantic Query Cache & LinkedIn Shared-Prefix Prompt Cache telemetry."""
+    return {
+        "semantic_cache": semantic_cache.stats(),
+        "prefix_cache": prefix_cache.stats(),
+    }
 
 
 @app.post("/evaluate")

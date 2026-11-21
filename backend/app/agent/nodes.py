@@ -346,33 +346,17 @@ def synthesize_cited_answer(state: RAGGraphState) -> Dict[str, Any]:
                 f"CalibratedRelevance: {chk['calibrated_prob']:.3f}\n"
                 f"Content:\n{chk.get('parent_content') or chk.get('content', '')}"
             )
-        internal_context_str = "\n\n---\n\n".join(formatted_context_blocks)
     else:
-        internal_context_str = "NO_RELEVANT_INTERNAL_DOCUMENTS_FOUND"
+        formatted_context_blocks = []
 
-    prompt = f"""You are a Staff-level Production RAG Assistant operating under strict grounding and citation rules.
+    from app.retrieval.prefix_cache import prefix_cache
 
-USER QUESTION:
-{query}
-
-VERIFIED INTERNAL DOCUMENT CHUNKS (Post-Hybrid RRF & Cross-Encoder Reranking):
-{internal_context_str}
-
-EXTERNAL INTERNET SEARCH RESULTS:
-{web_results}
-
-CRITICAL INSTRUCTIONS:
-1. Structure your response with these exact three sections:
-   ### According to internal documents:
-   - If VERIFIED INTERNAL DOCUMENT CHUNKS is 'NO_RELEVANT_INTERNAL_DOCUMENTS_FOUND', state clearly: "My internal documents do not contain relevant information for this query."
-   - Otherwise, answer using ONLY facts stated in the verified chunks and cite every claim inline using `[Doc 1]`, `[Doc 2]`, etc. Prioritize internal documents as authoritative truth even if they conflict with public internet results.
-
-   ### According to the internet:
-   - Summarize the external internet search findings concisely.
-
-   ### Comparison:
-   - Explicitly highlight any conflict, version difference, or agreement between the internal documents and the internet.
-"""
+    prompt_bundle = prefix_cache.build_prompt(
+        context_blocks=formatted_context_blocks,
+        user_query=query,
+        web_results=web_results,
+    )
+    prompt = prompt_bundle["full_prompt"]
 
     if not llm_circuit_breaker.allow_request():
         draft = _build_extractive_fallback_answer(query, relevant_chunks, web_results)
