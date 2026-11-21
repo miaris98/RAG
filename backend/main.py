@@ -322,6 +322,12 @@ async def clear_corpus():
     return {"status": "cleared", "corpus": retrieval_engine.stats()}
 
 
+@app.get("/corpus/shards-and-clusters")
+async def get_corpus_shards_and_clusters():
+    """#14 Spotify Semantic ID clusters & #20 Airbnb tenant shard topology."""
+    return retrieval_engine.get_shards_and_clusters()
+
+
 @app.post("/retrieve")
 async def debug_retrieve(req: RetrieveDebugRequest):
     """Directly executes Pre-Filtered RBAC + Tri-Modal Hybrid Retrieval without LLM generation."""
@@ -334,12 +340,14 @@ async def debug_retrieve(req: RetrieveDebugRequest):
         promote_parents=True,
         tenant_id=req.tenant_id,
         user_roles=req.user_roles,
+        semantic_id_prefix=req.semantic_id_prefix,
     )
     return {
         "query": req.query,
         "retrieval_mode": req.retrieval_mode,
         "tenant_id": req.tenant_id,
         "user_roles": req.user_roles,
+        "semantic_id_prefix": req.semantic_id_prefix,
         "count": len(chunks),
         "retrieval_funnel": retrieval_engine.get_last_funnel(),
         "results": [c.model_dump() for c in chunks],
