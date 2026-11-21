@@ -21,6 +21,7 @@ def ingest_document_to_backend(
     tenant_id: str = "default",
     access_roles: Optional[List[str]] = None,
     apply_guardrails: bool = True,
+    enable_contextual_enrichment: bool = False,
 ) -> Dict[str, Any]:
     """Sends a document to POST /ingest with RBAC metadata, guardrails, and chunking strategy."""
     payload = {
@@ -31,6 +32,7 @@ def ingest_document_to_backend(
         "tenant_id": tenant_id or "default",
         "access_roles": access_roles or ["public"],
         "apply_guardrails": bool(apply_guardrails),
+        "enable_contextual_enrichment": bool(enable_contextual_enrichment),
     }
     try:
         response = requests.post(f"{BACKEND_URL}/ingest", json=payload, timeout=30)
@@ -299,6 +301,7 @@ def ingest_document(
     tenant_id: str,
     roles_selected: List[str],
     apply_guardrails: bool,
+    enable_contextual: bool = False,
 ) -> str:
     if not content or not content.strip():
         return "⚠️ Please enter document content or click 'Seed Enterprise Sample Corpus'."
@@ -310,15 +313,20 @@ def ingest_document(
         tenant_id=tenant_id,
         access_roles=roles_selected or ["public"],
         apply_guardrails=apply_guardrails,
+        enable_contextual_enrichment=enable_contextual,
     )
     if response.get("status") == "error":
         return f"❌ Failed: {response['message']}"
 
+    symbols = response.get("code_symbols_extracted") or []
+    sym_str = ", ".join(f"`{s}`" for s in symbols[:10]) if symbols else "`none`"
     return (
         f"✅ **Ingested:** `{response.get('title')}` (`{response.get('doc_id')}`)\n"
         f"- **RBAC Scope:** `tenant={response.get('tenant_id')}`, `roles={response.get('access_roles')}`\n"
         f"- **Guardrail Flags:** `{response.get('guardrail_flags') or ['clean']}` | "
+        f"**Contextual Enrichment:** `{response.get('contextual_enrichment_enabled', False)}` | "
         f"**Cache Entries Invalidated:** `{response.get('invalidated_cache_entries', 0)}`\n"
+        f"- **Code Symbols Extracted (AST/Polyglot):** {sym_str}\n"
         f"- **Child Chunks Indexed (New):** `{response.get('chunks_indexed_new')}` "
         f"(Duplicates Skipped via SHA-256: `{response.get('chunks_skipped_duplicate')}`)\n"
         f"- **Latency:** `{response.get('ingestion_latency_ms')} ms`"
@@ -486,10 +494,15 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
                             value=["public", "engineering"],
                             label="Authorized RBAC Roles",
                         )
-                    ingest_guardrails = gr.Checkbox(
-                        value=True,
-                        label="Enable Security Guardrails (PII Redaction & Prompt Injection Defense)",
-                    )
+                    with gr.Row():
+                        ingest_guardrails = gr.Checkbox(
+                            value=True,
+                            label="Enable Security Guardrails (PII Redaction & Prompt Injection Defense)",
+                        )
+                        ingest_contextual = gr.Checkbox(
+                            value=True,
+                            label="Enable Anthropic Contextual Enrichment (Document Summary Prefix)",
+                        )
                     doc_input = gr.Textbox(
                         lines=7,
                         label="Document Content",
@@ -590,7 +603,16 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
     # Event Wiring
     ingest_btn.click(
         ingest_document,
-        inputs=[doc_input, doc_title, doc_source, chunk_strategy, ingest_tenant, ingest_roles, ingest_guardrails],
+        inputs=[
+            doc_input,
+            doc_title,
+            doc_source,
+            chunk_strategy,
+            ingest_tenant,
+            ingest_roles,
+            ingest_guardrails,
+            ingest_contextual,
+        ],
         outputs=ingest_out,
     )
     seed_btn.click(handle_seed_sample_corpus, inputs=[chunk_strategy], outputs=ingest_out)

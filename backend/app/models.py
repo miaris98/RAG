@@ -30,6 +30,10 @@ class DocumentInput(BaseModel):
     retention_days: int = Field(default=90, ge=1, le=3650, description="GDPR data retention TTL in days.")
     lawful_basis: str = Field(default="legitimate_interest", description="GDPR Article 6 lawful basis.")
     version: int = Field(default=1, ge=1, description="Document version for precedence ranking.")
+    enable_contextual_enrichment: bool = Field(
+        default=False,
+        description="Prepend Anthropic-style document-level contextual summary prefix to each chunk.",
+    )
     metadata: Optional[Dict[str, Any]] = Field(default=None, description="Optional custom metadata tags.")
 
 

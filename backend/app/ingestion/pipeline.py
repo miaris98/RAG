@@ -80,12 +80,16 @@ class IngestionPipeline:
             tenant_id=doc_input.tenant_id,
             access_roles=doc_input.access_roles,
             extra_metadata=doc_input.metadata,
+            enable_contextual_enrichment=doc_input.enable_contextual_enrichment,
         )
         added, skipped = retrieval_engine.add_chunks(chunks)
         doc_id = chunks[0].doc_id if chunks else None
         invalidated_cache_entries = semantic_cache.invalidate_by_doc_id(doc_id) if doc_id else 0
         elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
         parent_ids = {c.parent_id for c in chunks}
+        extracted_symbols = sorted(
+            {sym for c in chunks for sym in c.metadata.get("code_symbols", [])}
+        )
 
         audit_logger.log_event(
             event_type="document_ingested",
@@ -98,6 +102,8 @@ class IngestionPipeline:
                 "lawful_basis": doc_input.lawful_basis,
                 "retention_days": doc_input.retention_days,
                 "guardrail_flags": guardrail_flags,
+                "contextual_enrichment_enabled": doc_input.enable_contextual_enrichment,
+                "code_symbols_count": len(extracted_symbols),
             },
         )
 
@@ -110,6 +116,8 @@ class IngestionPipeline:
             "tenant_id": doc_input.tenant_id,
             "access_roles": doc_input.access_roles,
             "guardrail_flags": guardrail_flags,
+            "contextual_enrichment_enabled": doc_input.enable_contextual_enrichment,
+            "code_symbols_extracted": extracted_symbols,
             "invalidated_cache_entries": invalidated_cache_entries,
             "chunking_strategy": doc_input.chunking_strategy,
             "chunks_total_generated": len(chunks),
