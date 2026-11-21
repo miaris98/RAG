@@ -38,6 +38,10 @@ class DocumentInput(BaseModel):
         default=False,
         description="Prepend Anthropic-style document-level contextual summary prefix to each chunk.",
     )
+    enable_late_chunking: bool = Field(
+        default=False,
+        description="Perplexity-style Late Chunking: blend full-document boundary embedding into each chunk vector.",
+    )
     metadata: Optional[Dict[str, Any]] = Field(default=None, description="Optional custom metadata tags.")
 
 

@@ -22,6 +22,7 @@ def ingest_document_to_backend(
     access_roles: Optional[List[str]] = None,
     apply_guardrails: bool = True,
     enable_contextual_enrichment: bool = False,
+    enable_late_chunking: bool = False,
 ) -> Dict[str, Any]:
     """Sends a document to POST /ingest with RBAC metadata, guardrails, and chunking strategy."""
     payload = {
@@ -33,6 +34,7 @@ def ingest_document_to_backend(
         "access_roles": access_roles or ["public"],
         "apply_guardrails": bool(apply_guardrails),
         "enable_contextual_enrichment": bool(enable_contextual_enrichment),
+        "enable_late_chunking": bool(enable_late_chunking),
     }
     try:
         response = requests.post(f"{BACKEND_URL}/ingest", json=payload, timeout=30)
@@ -304,6 +306,7 @@ def ingest_document(
     roles_selected: List[str],
     apply_guardrails: bool,
     enable_contextual: bool = False,
+    enable_late_chunking: bool = False,
 ) -> str:
     if not content or not content.strip():
         return "⚠️ Please enter document content or click 'Seed Enterprise Sample Corpus'."
@@ -316,6 +319,7 @@ def ingest_document(
         access_roles=roles_selected or ["public"],
         apply_guardrails=apply_guardrails,
         enable_contextual_enrichment=enable_contextual,
+        enable_late_chunking=enable_late_chunking,
     )
     if response.get("status") == "error":
         return f"❌ Failed: {response['message']}"
@@ -327,6 +331,7 @@ def ingest_document(
         f"- **RBAC Scope:** `tenant={response.get('tenant_id')}`, `roles={response.get('access_roles')}`\n"
         f"- **Guardrail Flags:** `{response.get('guardrail_flags') or ['clean']}` | "
         f"**Contextual Enrichment:** `{response.get('contextual_enrichment_enabled', False)}` | "
+        f"**Late Chunking:** `{response.get('late_chunking_enabled', False)}` | "
         f"**Cache Entries Invalidated:** `{response.get('invalidated_cache_entries', 0)}`\n"
         f"- **Code Symbols Extracted (AST/Polyglot):** {sym_str}\n"
         f"- **Child Chunks Indexed (New):** `{response.get('chunks_indexed_new')}` "
@@ -567,6 +572,10 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
                             value=True,
                             label="Enable Anthropic Contextual Enrichment (Document Summary Prefix)",
                         )
+                        ingest_late_chunking = gr.Checkbox(
+                            value=True,
+                            label="Enable Perplexity Late Chunking (Boundary-Aware Embeddings)",
+                        )
                     doc_input = gr.Textbox(
                         lines=7,
                         label="Document Content",
@@ -695,6 +704,7 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
             ingest_roles,
             ingest_guardrails,
             ingest_contextual,
+            ingest_late_chunking,
         ],
         outputs=ingest_out,
     )

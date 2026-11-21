@@ -10,7 +10,7 @@ Orchestrates:
 
 from contextlib import asynccontextmanager
 import time
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from app.agent.graph import stream_rag_pipeline_sse
@@ -229,6 +229,36 @@ async def get_compliance_audit_report(limit: int = 50):
         "audit_events": audit_data["events"],
         "markdown_dossier": "\n".join(lines),
     }
+
+
+@app.post("/ingest/pdf")
+async def ingest_pdf_document(
+    file: UploadFile = File(...),
+    title: str = Form(default=""),
+    tenant_id: str = Form(default="default"),
+    access_roles: str = Form(default="public"),
+    chunking_strategy: str = Form(default="parent_child"),
+    enable_late_chunking: bool = Form(default=True),
+    enable_contextual_enrichment: bool = Form(default=True),
+):
+    """#10 NVIDIA layout- & table-aware PDF parser + hybrid ingestion endpoint."""
+    try:
+        pdf_bytes = await file.read()
+        roles = [r.strip().lower() for r in access_roles.split(",") if r.strip()] or ["public"]
+        return ingestion_pipeline.ingest_pdf(
+            pdf_bytes=pdf_bytes,
+            filename=file.filename or "uploaded.pdf",
+            title=title,
+            tenant_id=tenant_id,
+            access_roles=roles,
+            chunking_strategy=chunking_strategy,
+            enable_late_chunking=enable_late_chunking,
+            enable_contextual_enrichment=enable_contextual_enrichment,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"PDF ingestion failed: {exc}") from exc
 
 
 @app.post("/ingest/cdc")

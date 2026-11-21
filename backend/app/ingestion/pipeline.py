@@ -6,6 +6,7 @@ from typing import Dict, List
 from app.guardrails.audit import audit_logger
 from app.guardrails.security import guardrails
 from app.ingestion.chunking import ChunkingEngine
+from app.ingestion.pdf_parser import extract_structured_markdown_from_pdf
 from app.models import CDCEventRequest, DocumentInput
 from app.retrieval.hybrid import retrieval_engine
 from app.retrieval.semantic_cache import semantic_cache
@@ -88,7 +89,10 @@ class IngestionPipeline:
             extra_metadata=enriched_meta,
             enable_contextual_enrichment=doc_input.enable_contextual_enrichment,
         )
-        added, skipped = retrieval_engine.add_chunks(chunks)
+        added, skipped = retrieval_engine.add_chunks(
+            chunks,
+            document_context_text=content_to_index if doc_input.enable_late_chunking else None,
+        )
         doc_id = chunks[0].doc_id if chunks else None
         invalidated_cache_entries = semantic_cache.invalidate_by_doc_id(doc_id) if doc_id else 0
         elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
@@ -109,6 +113,7 @@ class IngestionPipeline:
                 "retention_days": doc_input.retention_days,
                 "guardrail_flags": guardrail_flags,
                 "contextual_enrichment_enabled": doc_input.enable_contextual_enrichment,
+                "late_chunking_enabled": doc_input.enable_late_chunking,
                 "code_symbols_count": len(extracted_symbols),
             },
         )
@@ -123,6 +128,7 @@ class IngestionPipeline:
             "access_roles": doc_input.access_roles,
             "guardrail_flags": guardrail_flags,
             "contextual_enrichment_enabled": doc_input.enable_contextual_enrichment,
+            "late_chunking_enabled": doc_input.enable_late_chunking,
             "code_symbols_extracted": extracted_symbols,
             "invalidated_cache_entries": invalidated_cache_entries,
             "chunking_strategy": doc_input.chunking_strategy,
@@ -132,6 +138,43 @@ class IngestionPipeline:
             "parent_windows_count": len(parent_ids),
             "ingestion_latency_ms": elapsed_ms,
             "corpus_stats": retrieval_engine.stats(),
+        }
+
+    def ingest_pdf(
+        self,
+        pdf_bytes: bytes,
+        filename: str = "uploaded.pdf",
+        title: str = "",
+        tenant_id: str = "default",
+        access_roles: List[str] | None = None,
+        chunking_strategy: str = "parent_child",
+        enable_late_chunking: bool = True,
+        enable_contextual_enrichment: bool = True,
+    ) -> dict:
+        """#10 NVIDIA layout/table-aware PDF ingestion into the hybrid RAG corpus."""
+        parsed = extract_structured_markdown_from_pdf(pdf_bytes=pdf_bytes, filename=filename)
+        res = self.ingest(
+            DocumentInput(
+                content=parsed["markdown"],
+                title=title or filename,
+                source=f"pdf://{filename}",
+                chunking_strategy=chunking_strategy,  # type: ignore[arg-type]
+                tenant_id=tenant_id,
+                access_roles=access_roles or ["public"],
+                enable_late_chunking=enable_late_chunking,
+                enable_contextual_enrichment=enable_contextual_enrichment,
+                metadata={
+                    "pdf_page_count": parsed["page_count"],
+                    "pdf_tables_detected": parsed["tables_detected"],
+                    "pdf_parser_backend": parsed["parser_backend"],
+                },
+            )
+        )
+        return {
+            **res,
+            "pdf_page_count": parsed["page_count"],
+            "pdf_tables_detected": parsed["tables_detected"],
+            "pdf_parser_backend": parsed["parser_backend"],
         }
 
     def process_cdc_event(self, event: CDCEventRequest) -> dict:
