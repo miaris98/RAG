@@ -118,3 +118,21 @@
 - [x] **P2.3 MCP Server, Labeled-Query Sidecar & Inverted RAG Structured Classification** (`backend/mcp_server.py`, `labeled_queries.py`, `structured.py`)
   - *Inspired by:* **Expedia Group**, **Block**, **Instacart**, **DoorDash**, **Ramp**
   - Exposes RBAC-scoped MCP tools (`retrieve_hybrid`, `ingest_document`, `gdpr_erase_document`), a vetted Labeled Queries sidecar cache, and `POST /query-structured` constrained taxonomy / rule-grounded JSON output.
+
+### P3 — Multi-Agent Subagents, A2A Protocol & Full-Stack Production Parity
+- [ ] **P3.1 CI/Docker Dependency Parity & Optional Ollama LLM Contextualizer** (`backend/requirements.txt`, `.github/workflows/edd.yml`, `backend/app/ingestion/chunking.py`)
+  - Add `python-multipart` (and `requests` in CI) so `POST /ingest/pdf` boots cleanly in Docker Compose and GitHub Actions EDD runs.
+  - Add optional `use_llm_contextualizer` flag in `ChunkingEngine` calling local Ollama (guarded by `CircuitBreaker`) with seamless deterministic extractive fallback.
+- [ ] **P3.2 Full Gradio UI, MCP & Grafana Observability Parity** (`frontend/app.py`, `backend/mcp_server.py`, `observability/grafana/`)
+  - Add **PDF Upload (`POST /ingest/pdf`)** and **CDC Upsert/Delete (`POST /ingest/cdc`)** controls to Gradio Tab 1.
+  - Surface **User Feedback KPIs**, **Airbnb Shards & Spotify Semantic Clusters**, **LinkedIn Prefix Cache Stats + Instacart Pre-Warm button**, and **Agoda OpsBot Read-Only SQL Inspector** in Gradio Tab 4.
+  - Expose `query_live_sql_inventory` and `classify_structured_taxonomy` in `backend/mcp_server.py`, and chart `rag_user_feedback_total`, `rag_user_satisfaction_rate`, `rag_prefix_cache_hits_total`, and `rag_prefix_cache_amortized_tokens_total` in Grafana.
+- [ ] **P3.3 Specialist Subagents & Parallel Supervisor Orchestration** (`backend/app/agent/subagents.py`, `POST /agent/orchestrate`)
+  - *Inspired by:* **Anthropic Multi-Agent Research**, **Uber (Genie)**, **LangGraph Supervisor**
+  - Implement a **Supervisor Agent** that decomposes complex queries and delegates in parallel to isolated, least-privilege **Specialist Subagents**: `retrieval_specialist` (Tri-Modal Hybrid RAG), `sql_ops_specialist` (read-only live SQL inventory/incidents), `compliance_auditor` (guardrails + structured policy rules + P2.1 hallucination judge), and `web_researcher` (circuit-breaker external search).
+  - Emit per-subagent child spans into `TraceCollector` for waterfall visualization and expose multi-agent delegation telemetry in Gradio Tab 2.
+- [ ] **P3.4 Google A2A (Agent-to-Agent) Protocol Server & Confused-Deputy Security** (`backend/app/a2a/`, `GET /.well-known/agent.json`, `POST /a2a`)
+  - *Inspired by:* **Google A2A Protocol Specification**, **OWASP Agentic Top 10**
+  - Publish a spec-compliant **A2A Agent Card** at `GET /.well-known/agent.json` advertising skills (`enterprise_rag_qa`, `live_sql_ops_audit`, `taxonomy_rule_classifier`, `multi_agent_research`), capabilities, and RBAC auth requirements.
+  - Implement JSON-RPC 2.0 `POST /a2a` supporting `tasks/send`, `tasks/get`, `tasks/cancel`, and SSE streaming (`tasks/sendSubscribe`) with typed A2A `Artifact` outputs and `submitted -> working -> completed | failed | canceled` task states.
+  - Enforce **A2A anti-confused-deputy RBAC delegation** (intersecting peer-agent allowed scopes with caller roles) and log every cross-agent A2A handoff to the SHA-256 tamper-evident audit ledger.
