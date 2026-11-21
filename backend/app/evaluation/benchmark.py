@@ -8,6 +8,7 @@
 import time
 from typing import Any, Dict, List
 
+from app.evaluation.judge import rag_judge
 from app.evaluation.metrics import (
     compute_relevance_vector,
     context_precision_at_k,
@@ -16,7 +17,7 @@ from app.evaluation.metrics import (
     reciprocal_rank_at_k,
 )
 from app.ingestion.pipeline import ingestion_pipeline
-from app.models import EvaluationRequest, RetrievalMode
+from app.models import EvaluationRequest, QueryInput, RetrievalMode
 from app.retrieval.hybrid import retrieval_engine
 
 
@@ -130,7 +131,7 @@ def run_ablation_benchmark(req: EvaluationRequest) -> Dict[str, Any]:
         per_query_details[mode] = query_rows
 
     markdown_report = _format_markdown_ablation_table(mode_summaries, req.top_k)
-    return {
+    result: Dict[str, Any] = {
         "status": "success",
         "top_k": req.top_k,
         "corpus_stats": retrieval_engine.stats(),
@@ -138,6 +139,76 @@ def run_ablation_benchmark(req: EvaluationRequest) -> Dict[str, Any]:
         "per_query_details": per_query_details,
         "markdown_report": markdown_report,
     }
+
+    if req.enable_judge_eval:
+        from app.agent.graph import execute_rag_pipeline
+
+        judge_rows: List[Dict[str, Any]] = []
+        for item in GOLDEN_QA_BENCHMARK:
+            rag_out = execute_rag_pipeline(
+                QueryInput(
+                    text=item["query"],
+                    retrieval_mode="hybrid_graph_rerank",
+                    top_k=req.top_k,
+                    enable_web_search=False,
+                    enable_semantic_cache=False,
+                    max_retries=0,
+                )
+            )
+            chunks = rag_out.get("trace", {}).get("retrieved_chunks", [])
+            contexts = [c.get("parent_content", "") for c in chunks]
+            eval_res = rag_judge.evaluate_response(
+                query=item["query"],
+                answer=rag_out.get("answer", ""),
+                contexts=contexts,
+                use_llm_judge=req.use_llm_judge,
+            )
+            judge_rows.append({"id": item["id"], "query": item["query"], **eval_res})
+
+        n_j = max(1, len(judge_rows))
+        pass_count = sum(1 for r in judge_rows if r["verdict"] == "pass")
+        hallucinated_count = sum(1 for r in judge_rows if r["hallucinated_references"])
+        judge_summary = {
+            "num_evaluated": len(judge_rows),
+            "pass_rate": round(pass_count / n_j, 4),
+            "mean_faithfulness": round(sum(r["faithfulness_score"] for r in judge_rows) / n_j, 4),
+            "mean_answer_relevance": round(sum(r["answer_relevance_score"] for r in judge_rows) / n_j, 4),
+            "mean_citation_grounding": round(sum(r["citation_grounding_score"] for r in judge_rows) / n_j, 4),
+            "mean_overall_score": round(sum(r["overall_score"] for r in judge_rows) / n_j, 4),
+            "hallucination_rate": round(hallucinated_count / n_j, 4),
+            "per_query": judge_rows,
+        }
+        calibration = rag_judge.run_human_calibration_check()
+        result["judge_summary"] = judge_summary
+        result["calibration"] = calibration
+        result["markdown_report"] = (
+            markdown_report + "\n\n" + _format_judge_markdown(judge_summary, calibration)
+        )
+
+    return result
+
+
+def _format_judge_markdown(judge_summary: Dict[str, Any], calibration: Dict[str, Any]) -> str:
+    """Formats P2.1 LLM-as-a-Judge & Human Calibration summary into Markdown."""
+    lines = [
+        "### ⚖️ P2.1 LLM-as-a-Judge & Human-Calibrated Generation Audit",
+        f"- **Human Calibration Agreement:** `{calibration['human_agreement_rate'] * 100:.1f}%` "
+        f"(`{calibration['num_cases']}` golden cases | MAE: `{calibration['mean_absolute_error']:.3f}`)",
+        f"- **Mean Faithfulness:** `{judge_summary['mean_faithfulness']:.3f}` | "
+        f"**Answer Relevance:** `{judge_summary['mean_answer_relevance']:.3f}` | "
+        f"**Citation Grounding:** `{judge_summary['mean_citation_grounding']:.3f}` | "
+        f"**Pass Rate:** `{judge_summary['pass_rate'] * 100:.1f}%`",
+        "",
+        "| Query ID | Faithfulness | Relevance | Citation Grounding | Overall | Verdict | Hallucinated Refs |",
+        "| :--- | :---: | :---: | :---: | :---: | :---: | :--- |",
+    ]
+    for row in judge_summary["per_query"]:
+        refs = ", ".join(row["hallucinated_references"]) if row["hallucinated_references"] else "None"
+        lines.append(
+            f"| `{row['id']}` | `{row['faithfulness_score']:.2f}` | `{row['answer_relevance_score']:.2f}` | "
+            f"`{row['citation_grounding_score']:.2f}` | `{row['overall_score']:.2f}` | `{row['verdict'].upper()}` | {refs} |"
+        )
+    return "\n".join(lines)
 
 
 def _format_markdown_ablation_table(summaries: List[Dict[str, Any]], k: int) -> str:

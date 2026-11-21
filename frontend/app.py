@@ -97,14 +97,16 @@ def get_job_result(job_id: str) -> Dict[str, Any]:
         return {"status": "error", "result": str(exc)}
 
 
-def run_evaluation_on_backend(top_k: int = 3) -> Dict[str, Any]:
+def run_evaluation_on_backend(top_k: int = 3, enable_judge_eval: bool = True) -> Dict[str, Any]:
     payload = {
         "top_k": int(top_k),
         "modes": ["dense", "sparse", "hybrid_rrf", "hybrid_rerank", "hybrid_graph_rerank"],
         "seed_golden_corpus": True,
+        "enable_judge_eval": bool(enable_judge_eval),
+        "use_llm_judge": False,
     }
     try:
-        response = requests.post(f"{BACKEND_URL}/evaluate", json=payload, timeout=60)
+        response = requests.post(f"{BACKEND_URL}/evaluate", json=payload, timeout=90)
         response.raise_for_status()
         return response.json()
     except Exception as exc:
@@ -453,8 +455,8 @@ def stream_query_live(
         yield f"❌ SSE Stream Error: {exc}", "_Stream interrupted._"
 
 
-def handle_run_evaluation(top_k: int = 3) -> str:
-    res = run_evaluation_on_backend(top_k=int(top_k))
+def handle_run_evaluation(top_k: int = 3, enable_judge_eval: bool = True) -> str:
+    res = run_evaluation_on_backend(top_k=int(top_k), enable_judge_eval=bool(enable_judge_eval))
     if res.get("status") == "error":
         return f"❌ Evaluation failed: {res.get('message')}"
     return res.get("markdown_report", "No report returned.")
@@ -571,6 +573,10 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
             )
             with gr.Row():
                 eval_top_k = gr.Slider(minimum=1, maximum=10, value=3, step=1, label="Evaluation Cut-off (Top-K)")
+                eval_judge_chk = gr.Checkbox(
+                    value=True,
+                    label="Enable P2.1 LLM-as-a-Judge & Human-Calibration Audit",
+                )
                 eval_btn = gr.Button("🧪 Run Full 5-Mode Retrieval Ablation Study", variant="primary")
             eval_output = gr.Markdown(value="_Click 'Run Full 5-Mode Retrieval Ablation Study' to compute metrics._")
 
@@ -634,7 +640,7 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
         outputs=[submission_out, job_id_state],
     )
     check_btn.click(check_status, inputs=job_id_state, outputs=[final_output, trace_output])
-    eval_btn.click(handle_run_evaluation, inputs=[eval_top_k], outputs=eval_output)
+    eval_btn.click(handle_run_evaluation, inputs=[eval_top_k, eval_judge_chk], outputs=eval_output)
     audit_refresh_btn.click(
         fetch_compliance_audit_dashboard,
         inputs=[],
