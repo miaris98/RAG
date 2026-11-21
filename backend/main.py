@@ -14,6 +14,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from app.agent.graph import stream_rag_pipeline_sse
+from app.agent.structured import execute_structured_taxonomy_query
 from app.config import settings
 from app.evaluation.benchmark import run_ablation_benchmark
 from app.guardrails.audit import audit_logger
@@ -24,6 +25,8 @@ from app.models import (
     EvaluationRequest,
     QueryInput,
     RetrieveDebugRequest,
+    StructuredQueryRequest,
+    StructuredQueryResponse,
     UserFeedbackRequest,
 )
 from app.observability.feedback import feedback_store
@@ -343,6 +346,15 @@ async def get_job(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+
+@app.post("/query-structured", response_model=StructuredQueryResponse)
+async def query_structured_taxonomy(req: StructuredQueryRequest):
+    """DoorDash Inverted RAG + Ramp Rule-Grounded structured JSON classification endpoint."""
+    try:
+        return execute_structured_taxonomy_query(req)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Structured query failed: {exc}") from exc
 
 
 @app.post("/evaluate")

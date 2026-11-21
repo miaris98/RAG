@@ -10,7 +10,7 @@ An interview-ready, production-grade **Retrieval-Augmented Generation (RAG)** mi
 
 ## 🎯 60-Second Interview Elevator Pitch
 
-> *"Instead of a naive dense-only prototype, I built a modular, 100% local **Production RAG Platform** with **Pre-Filtered Multi-Tenant RBAC**, **Table-Aware Parent-Child Chunking** with SHA-256 deduplication, and a **Tri-Modal Hybrid Retrieval Engine** (Milvus Dense + BM25 + 1-hop Entity Knowledge Graph fused via **Reciprocal Rank Fusion**, followed by **Cross-Encoder Reranking**, **MMR Diversity**, and **Lost-in-the-Middle** U-shaped reordering). Orchestration runs on a **cyclic LangGraph StateGraph** implementing **Adaptive Query Routing** (`lexical_lookup`, `conceptual_hyde`, `multi_hop`), **Corrective RAG (CRAG)** gating, and **Self-RAG** faithfulness verification with **structured `[Doc i]` inline citations & supporting quotes**. The system includes **PII & Prompt Injection Guardrails**, **GDPR Article 17 surgical erasure**, a **tamper-evident SHA-256 hash-chained audit ledger**, **hierarchical distributed span waterfalls**, **Prometheus/Grafana**, and an automated **29-test TDD & 5-mode IR Ablation suite**."*
+> *"Instead of a naive dense-only prototype, I built a modular, 100% local **Production RAG Platform** with **Pre-Filtered Multi-Tenant RBAC**, **Table-, Fenced-Code & AST-Symbol-Aware Parent-Child Chunking** with SHA-256 deduplication, **Anthropic Contextual Enrichment**, **Shopify/Notion CDC Incremental Upserts**, and a **Tri-Modal Hybrid Retrieval Engine** (Milvus Dense + BM25 + 1-hop Entity Knowledge Graph fused via **Reciprocal Rank Fusion** with **Freshness Time-Decay & Version Precedence**, followed by **Cross-Encoder Reranking**, **MMR Diversity**, and **Lost-in-the-Middle** U-shaped reordering). Orchestration runs on a **cyclic LangGraph StateGraph** implementing **Adaptive Query Routing**, **Corrective RAG (CRAG)** gating, **Self-RAG** faithfulness verification with **structured `[Doc i]` inline citations**, and **DoorDash Inverted RAG / Ramp Rule-Grounded Structured JSON Classification**. The system includes **PII & Prompt Injection Guardrails**, **GDPR Article 17 surgical erasure**, a **tamper-evident SHA-256 hash-chained audit ledger**, **Zendesk-style user feedback telemetry**, **hierarchical distributed span waterfalls**, **Prometheus/Grafana**, **P2.1 LLM-as-a-Judge & Human Calibration**, and an automated **41-test TDD & 5-mode IR Ablation suite**."*
 
 ```mermaid
 flowchart LR
@@ -31,7 +31,8 @@ flowchart LR
 | Interface / Endpoint | Local `.venv` URL | Docker Compose URL | Purpose in Demo / Interview |
 | :--- | :--- | :--- | :--- |
 | **Gradio 4-Tab Studio** | [http://127.0.0.1:7860](http://127.0.0.1:7860) | [http://localhost:7860](http://localhost:7860) | Main interactive UI (Ingestion, SSE Query, Ablations, Audit Center) |
-| **FastAPI Swagger UI** | [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) | [http://localhost:8000/docs](http://localhost:8000/docs) | Interactive OpenAPI schema & GDPR deletion endpoint |
+| **FastAPI Swagger UI** | [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) | [http://localhost:8000/docs](http://localhost:8000/docs) | Interactive OpenAPI schema (`/ingest/cdc`, `/query-structured`, `/feedback`, GDPR erase) |
+| **User Feedback KPIs** | [http://127.0.0.1:8000/feedback](http://127.0.0.1:8000/feedback) | [http://localhost:8000/feedback](http://localhost:8000/feedback) | Rolling thumbs-up/down satisfaction rate & recent user ratings |
 | **Distributed Traces JSON** | [http://127.0.0.1:8000/traces](http://127.0.0.1:8000/traces) | [http://localhost:8000/traces](http://localhost:8000/traces) | Langfuse-compatible parent-child spans & waterfall timings |
 | **Compliance Audit Dossier** | [http://127.0.0.1:8000/compliance/audit-report](http://127.0.0.1:8000/compliance/audit-report) | [http://localhost:8000/compliance/audit-report](http://localhost:8000/compliance/audit-report) | Full JSON + Markdown system audit report |
 | **SHA-256 Audit Ledger** | [http://127.0.0.1:8000/audit-logs](http://127.0.0.1:8000/audit-logs) | [http://localhost:8000/audit-logs](http://localhost:8000/audit-logs) | Tamper-evident hash-chained event history (`chain_valid: true`) |
@@ -105,7 +106,7 @@ Open **[http://127.0.0.1:7860](http://127.0.0.1:7860)** and walk the interviewer
 
 ---
 
-## 🧪 Step 3: Run Automated Tests (`29` TDD, Security & GDPR Tests)
+## 🧪 Step 3: Run Automated Tests (`41` TDD, Security, Judge, CDC & GDPR Tests)
 
 ```powershell
 cd C:\Users\miari\Desktop\RAG
@@ -129,18 +130,18 @@ RAG/
 │   ├── app/
 │   │   ├── config.py              # Environment-backed settings
 │   │   ├── models.py              # Pydantic contracts (RBAC, CitationItem, PipelineTrace, Eval)
-│   │   ├── ingestion/             # Table-aware Parent-Child chunking & SHA-256 dedup pipeline
-│   │   ├── retrieval/             # Singleton models, Entity Graph, Hybrid RRF, Reranker, MMR, Cache
-│   │   ├── agent/                 # Cyclic LangGraph StateGraph (Router -> CRAG -> Self-RAG + Citations)
+│   │   ├── ingestion/             # Table/Code/AST-aware Parent-Child chunking, Contextual Enrichment & CDC upserts
+│   │   ├── retrieval/             # Singleton models, Entity Graph, Hybrid RRF + Freshness Decay, Reranker, MMR, Cache
+│   │   ├── agent/                 # Cyclic LangGraph StateGraph + Inverted RAG Taxonomy / Structured JSON (`structured.py`)
 │   │   ├── guardrails/            # PII & Injection Guardrails + SHA-256 Tamper-Evident Audit Trail
 │   │   ├── memory/                # Multi-turn session memory & pronoun coreference resolution
-│   │   ├── observability/         # Langfuse-compatible TraceCollector + Prometheus + Circuit Breakers
-│   │   ├── evaluation/            # HitRate@K, MRR@K, NDCG@K & 5-Mode Ablation Benchmark
+│   │   ├── observability/         # Langfuse-compatible TraceCollector + Prometheus + Circuit Breakers + FeedbackStore
+│   │   ├── evaluation/            # HitRate@K, MRR@K, NDCG@K, 5-Mode Ablation & P2.1 LLM-as-a-Judge (`judge.py`)
 │   │   └── worker/                # RabbitMQ async query & ingestion workers with thread fallback
 │   ├── mcp_server.py              # RBAC-scoped MCP server (retrieve, ingest, GDPR erase)
 │   ├── main.py                    # FastAPI gateway
 │   ├── debug.py                   # CLI diagnostic & ablation inspector
-│   └── tests/                     # 29 automated TDD unit, integration, GDPR & OWASP security tests
+│   └── tests/                     # 41 automated TDD unit, integration, judge, CDC, taxonomy, GDPR & OWASP tests
 ├── frontend/
 │   └── app.py                     # 4-Tab Gradio Observability, Eval & Compliance Audit Studio
 ├── docs/

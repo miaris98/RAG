@@ -486,6 +486,37 @@ def submit_feedback_to_backend(
         return f"❌ Feedback error: `{exc}`"
 
 
+def run_structured_taxonomy_query_ui(
+    query: str,
+    labels_csv: str,
+    retrieval_mode: str,
+    top_k: int,
+    tenant_id: str,
+    user_roles: List[str],
+) -> str:
+    """Calls POST /query-structured (DoorDash Inverted RAG + Ramp Rule-Grounded JSON)."""
+    labels = [x.strip() for x in (labels_csv or "").split(",") if x.strip()]
+    if not query or not query.strip() or not labels:
+        return json.dumps({"error": "Provide a query and at least one comma-separated taxonomy label."}, indent=2)
+    try:
+        resp = requests.post(
+            f"{BACKEND_URL}/query-structured",
+            json={
+                "text": query.strip(),
+                "allowed_labels": labels,
+                "retrieval_mode": retrieval_mode,
+                "top_k": int(top_k),
+                "tenant_id": tenant_id or "default",
+                "user_roles": user_roles or ["public"],
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return json.dumps(resp.json(), indent=2)
+    except Exception as exc:
+        return json.dumps({"error": str(exc)}, indent=2)
+
+
 def handle_run_evaluation(top_k: int = 3, enable_judge_eval: bool = True) -> str:
     res = run_evaluation_on_backend(top_k=int(top_k), enable_judge_eval=bool(enable_judge_eval))
     if res.get("status") == "error":
@@ -598,6 +629,17 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
                         label="Pipeline Trace & Tri-Modal Score Breakdown",
                         value="_Retrieval telemetry will appear here._",
                     )
+                    with gr.Accordion("🧭 Inverted RAG Taxonomy & Rule-Grounded JSON (DoorDash / Ramp)", open=False):
+                        taxonomy_labels_input = gr.Textbox(
+                            label="Allowed Taxonomy Enum Labels (comma-separated)",
+                            value="payment_ledger_quorum_incident, hsm_key_rotation_security, data_retention_encryption_policy, sovereign_compliance_escalation",
+                        )
+                        structured_btn = gr.Button("🧭 Classify & Extract Rule-Grounded JSON")
+                        structured_json_out = gr.Code(
+                            label="Validated StructuredQueryResponse JSON (/query-structured)",
+                            language="json",
+                            value="{}",
+                        )
 
         # TAB 3: Quantitative RAG Evaluation & Ablation Suite
         with gr.TabItem("3. RAG Evaluation & Ablation Benchmark"):
@@ -684,6 +726,11 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
         lambda q, r: submit_feedback_to_backend("down", q, r),
         inputs=[q_input, query_roles],
         outputs=fb_status_md,
+    )
+    structured_btn.click(
+        run_structured_taxonomy_query_ui,
+        inputs=[q_input, taxonomy_labels_input, retrieval_mode, top_k_slider, query_tenant, query_roles],
+        outputs=structured_json_out,
     )
     eval_btn.click(handle_run_evaluation, inputs=[eval_top_k, eval_judge_chk], outputs=eval_output)
     audit_refresh_btn.click(
