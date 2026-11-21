@@ -94,8 +94,17 @@ class HybridRetrievalEngine:
         with self._lock:
             return dict(self._last_funnel)
 
-    def add_chunks(self, chunks: List[ChunkRecord]) -> Tuple[int, int]:
-        """Idempotently indexes chunks into the local registry, BM25, Entity Graph, and Milvus."""
+    def add_chunks(
+        self,
+        chunks: List[ChunkRecord],
+        document_context_text: Optional[str] = None,
+        late_chunking_alpha: float = 0.25,
+    ) -> Tuple[int, int]:
+        """Idempotently indexes chunks into the local registry, BM25, Entity Graph, and Milvus.
+
+        When document_context_text is supplied (Perplexity-style Late Chunking), each chunk's dense vector
+        is blended with the full-document contextual embedding and re-normalized.
+        """
         if not chunks:
             return 0, 0
 
@@ -114,6 +123,19 @@ class HybridRetrievalEngine:
             embedder = ModelRegistry.get_embeddings()
             texts = [c.content for c in new_chunks]
             vectors = embedder.embed_documents(texts)
+
+            if document_context_text and document_context_text.strip():
+                doc_window = document_context_text.strip()[:2500]
+                doc_vec = embedder.embed_documents([doc_window])[0]
+                alpha = max(0.05, min(0.5, float(late_chunking_alpha)))
+                blended_vectors: List[List[float]] = []
+                for chk, vec in zip(new_chunks, vectors):
+                    raw_blend = [(1.0 - alpha) * c_v + alpha * d_v for c_v, d_v in zip(vec, doc_vec)]
+                    norm = math.sqrt(sum(v * v for v in raw_blend)) or 1.0
+                    blended_vectors.append([v / norm for v in raw_blend])
+                    chk.metadata["late_chunking_applied"] = True
+                    chk.metadata["late_chunking_alpha"] = alpha
+                vectors = blended_vectors
 
             for chk, vec in zip(new_chunks, vectors):
                 chk.entities = entity_graph.add_chunk(chk.chunk_id, chk.parent_content)
