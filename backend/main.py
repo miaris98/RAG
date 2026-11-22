@@ -35,6 +35,7 @@ from app.models import (
     RetrieveDebugRequest,
     SQLQueryRequest,
     ServiceRegistrationRequest,
+    ServiceTokenRequest,
     StructuredQueryRequest,
     StructuredQueryResponse,
     UserFeedbackRequest,
@@ -43,6 +44,7 @@ from app.observability.feedback import feedback_store
 from app.observability.metrics import metrics_collector
 from app.observability.tracing import trace_collector
 from app.resilience.patterns import bulkhead_registry, evaluate_degradation_level, retry_telemetry
+from app.security import ZeroTrustError, secrets_provider, zero_trust_auth
 from app.retrieval.embeddings import ModelRegistry
 from app.retrieval.hybrid import retrieval_engine
 from app.retrieval.labeled_queries import labeled_query_store
@@ -579,6 +581,39 @@ async def get_cqrs_read_projection():
 async def get_database_per_service_boundaries():
     """P4.3 Database-per-Service ownership boundaries preventing cross-service DB coupling."""
     return {"count": len(DATABASE_PER_SERVICE_BOUNDARIES), "boundaries": DATABASE_PER_SERVICE_BOUNDARIES}
+
+
+@app.post("/security/token")
+async def issue_zero_trust_service_token(req: ServiceTokenRequest):
+    """P4.4 Issues a short-lived (<=300s) Zero Trust HS256 service JWT with jti replay ID."""
+    try:
+        token = zero_trust_auth.issue_token(
+            subject=req.subject,
+            audience=req.audience,
+            roles=req.roles,
+            ttl_sec=req.ttl_sec,
+        )
+        audit_logger.log_event(
+            event_type="zero_trust_token_issued",
+            actor_roles=req.roles,
+            summary=f"Issued short-lived JWT ({req.ttl_sec}s) for subject='{req.subject}' aud='{req.audience}'",
+        )
+        return {"token_type": "Bearer", "ttl_sec": req.ttl_sec, "token": token}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/security/verify")
+async def verify_zero_trust_service_token(request: Request):
+    """P4.4 Verifies an X-Service-Token JWT signature, expiry, audience, and jti replay protection."""
+    token = request.headers.get("X-Service-Token", "").strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    try:
+        claims = zero_trust_auth.verify_token(token, expected_audience="rag-gateway-api", prevent_replay=True)
+        return {"valid": True, "claims": claims}
+    except ZeroTrustError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
 @app.post("/evaluate")

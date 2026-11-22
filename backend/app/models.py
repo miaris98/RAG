@@ -361,3 +361,12 @@ class ServiceRegistrationRequest(BaseModel):
     ttl_sec: float = Field(default=30.0, ge=0.01, le=86400.0)
     version: str = Field(default="1.0.0", max_length=40)
     metadata: Optional[Dict[str, Any]] = Field(default=None)
+
+
+class ServiceTokenRequest(BaseModel):
+    """P4.4 Zero Trust short-lived service-to-service JWT issuance request."""
+
+    subject: str = Field(..., min_length=1, max_length=100)
+    audience: str = Field(default="rag-gateway-api", min_length=1, max_length=100)
+    roles: List[str] = Field(default_factory=lambda: ["public"])
+    ttl_sec: float = Field(default=120.0, gt=0.0, le=300.0)

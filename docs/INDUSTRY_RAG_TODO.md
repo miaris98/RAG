@@ -150,7 +150,7 @@
   - Enforce **Database-per-Service** boundaries across Vector/Search, SQL OpsBot, Audit Ledger, and Feedback stores via strict service interfaces.
   - Implement **Saga Pattern with Compensating Transactions** (`IngestionSaga` rolling back partial Vector/BM25/Graph writes on step failure; `GDPRErasureSaga` coordinating multi-store erasure with compensation logs).
   - Implement **CQRS (Command Query Responsibility Segregation)** separating write commands (`/ingest`, `/ingest/cdc`, `DELETE /documents/{doc_id}`) from lock-free read-optimized materialized projections serving `/documents`, `/corpus/shards-and-clusters`, and `/compliance/audit-report`.
-- [ ] **P4.4 Zero Trust Security & Least-Privilege Secrets Hygiene** (`backend/app/security/zero_trust.py`)
+- [x] **P4.4 Zero Trust Security & Least-Privilege Secrets Hygiene** (`backend/app/security/zero_trust.py`)
   - Implement **Zero Trust Short-Lived Service JWTs** (`iss`, `sub`, `aud`, `roles`, `exp <= 300s`, `jti` replay cache) validated via `X-Service-Token` across internal service & A2A peer boundaries.
   - Add a **Least-Privilege Secrets Provider** abstraction (env + HashiCorp Vault/KMS adapter) with automated secret-leakage redaction in logs, traces, and audit events.
 - [ ] **P4.5 Immutable IaC, Progressive Delivery & Chaos Engineering** (`deploy/`, `backend/app/resilience/chaos.py`)
