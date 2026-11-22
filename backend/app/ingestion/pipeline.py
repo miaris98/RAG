@@ -88,6 +88,7 @@ class IngestionPipeline:
             access_roles=doc_input.access_roles,
             extra_metadata=enriched_meta,
             enable_contextual_enrichment=doc_input.enable_contextual_enrichment,
+            use_llm_contextualizer=doc_input.use_llm_contextualizer,
         )
         added, skipped = retrieval_engine.add_chunks(
             chunks,
@@ -99,6 +100,9 @@ class IngestionPipeline:
         parent_ids = {c.parent_id for c in chunks}
         extracted_symbols = sorted(
             {sym for c in chunks for sym in c.metadata.get("code_symbols", [])}
+        )
+        contextualizer_backend = (
+            chunks[0].metadata.get("contextualizer_backend", "disabled") if chunks else "disabled"
         )
 
         audit_logger.log_event(
@@ -128,6 +132,7 @@ class IngestionPipeline:
             "access_roles": doc_input.access_roles,
             "guardrail_flags": guardrail_flags,
             "contextual_enrichment_enabled": doc_input.enable_contextual_enrichment,
+            "contextualizer_backend": contextualizer_backend,
             "late_chunking_enabled": doc_input.enable_late_chunking,
             "code_symbols_extracted": extracted_symbols,
             "invalidated_cache_entries": invalidated_cache_entries,

@@ -38,6 +38,10 @@ class DocumentInput(BaseModel):
         default=False,
         description="Prepend Anthropic-style document-level contextual summary prefix to each chunk.",
     )
+    use_llm_contextualizer: bool = Field(
+        default=False,
+        description="When contextual enrichment is enabled, attempt local Ollama LLM prefixing with extractive fallback.",
+    )
     enable_late_chunking: bool = Field(
         default=False,
         description="Perplexity-style Late Chunking: blend full-document boundary embedding into each chunk vector.",

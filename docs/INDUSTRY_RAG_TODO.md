@@ -120,7 +120,7 @@
   - Exposes RBAC-scoped MCP tools (`retrieve_hybrid`, `ingest_document`, `gdpr_erase_document`), a vetted Labeled Queries sidecar cache, and `POST /query-structured` constrained taxonomy / rule-grounded JSON output.
 
 ### P3 — Multi-Agent Subagents, A2A Protocol & Full-Stack Production Parity
-- [ ] **P3.1 CI/Docker Dependency Parity & Optional Ollama LLM Contextualizer** (`backend/requirements.txt`, `.github/workflows/edd.yml`, `backend/app/ingestion/chunking.py`)
+- [x] **P3.1 CI/Docker Dependency Parity & Optional Ollama LLM Contextualizer** (`backend/requirements.txt`, `.github/workflows/edd.yml`, `backend/app/ingestion/chunking.py`)
   - Add `python-multipart` (and `requests` in CI) so `POST /ingest/pdf` boots cleanly in Docker Compose and GitHub Actions EDD runs.
   - Add optional `use_llm_contextualizer` flag in `ChunkingEngine` calling local Ollama (guarded by `CircuitBreaker`) with seamless deterministic extractive fallback.
 - [ ] **P3.2 Full Gradio UI, MCP & Grafana Observability Parity** (`frontend/app.py`, `backend/mcp_server.py`, `observability/grafana/`)

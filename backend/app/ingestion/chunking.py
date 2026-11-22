@@ -8,7 +8,9 @@
 import ast
 import hashlib
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import requests
 
 try:
     from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -57,6 +59,12 @@ except ImportError:
 
 from app.config import settings
 from app.models import ChunkRecord, ChunkingStrategy
+from app.observability.metrics import CircuitBreaker
+
+
+contextualizer_breaker = CircuitBreaker(
+    name="ollama_contextualizer", failure_threshold=2, recovery_timeout_sec=60.0
+)
 
 
 def compute_content_hash(prefix: str, text: str) -> str:
@@ -163,9 +171,50 @@ def generate_contextual_prefix(
     title: str,
     section: str,
     code_symbols: Optional[List[str]] = None,
-) -> str:
-    """Anthropic-style situational context prefix grounding an isolated chunk in its parent document."""
-    # Extract the first informative non-heading sentence from the document as global thesis
+    chunk_text: str = "",
+    use_llm: bool = False,
+    return_backend: bool = False,
+) -> Union[str, Tuple[str, str]]:
+    """Anthropic-style situational context prefix grounding an isolated chunk in its parent document.
+
+    When use_llm=True and the local Ollama service is reachable (protected by contextualizer_breaker),
+    generates a concise 1-sentence LLM situational summary; otherwise uses a deterministic extractive summary.
+    """
+    backend = "extractive_fallback"
+    llm_summary = ""
+
+    if use_llm and contextualizer_breaker.allow_request():
+        prompt = (
+            "Situate the chunk within the overall document in ONE concise sentence (max 30 words) "
+            "to improve search retrieval. Output ONLY that sentence.\n"
+            f"Document Title: {title}\nSection: {section}\n"
+            f"Document Excerpt: {full_doc_text[:1000]}\n"
+            f"Chunk: {(chunk_text or full_doc_text)[:500]}"
+        )
+        try:
+            resp = requests.post(
+                f"{settings.llm_api_base.rstrip('/')}/chat/completions",
+                json={
+                    "model": settings.llm_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.0,
+                },
+                timeout=2.0,
+            )
+            resp.raise_for_status()
+            candidate = str(resp.json()["choices"][0]["message"]["content"]).strip().replace("\n", " ")
+            if candidate:
+                llm_summary = candidate[:240]
+                backend = f"ollama_llm ({settings.llm_model})"
+                contextualizer_breaker.record_success()
+        except Exception:
+            contextualizer_breaker.record_failure()
+
+    if llm_summary:
+        prefix = f"[Context: {llm_summary}]\n"
+        return (prefix, backend) if return_backend else prefix
+
+    # Deterministic extractive fallback: extract the first informative non-heading sentence as global thesis
     thesis = ""
     for line in full_doc_text.splitlines():
         cleaned = line.strip()
@@ -181,7 +230,8 @@ def generate_contextual_prefix(
         parts.append(f"Document summary: {thesis}")
     if code_symbols:
         parts.append(f"Defines code symbols: {', '.join(code_symbols[:8])}")
-    return f"[Context: {' | '.join(parts)}]\n"
+    prefix = f"[Context: {' | '.join(parts)}]\n"
+    return (prefix, backend) if return_backend else prefix
 
 
 def format_contextual_header(
@@ -235,6 +285,7 @@ class ChunkingEngine:
         access_roles: Optional[List[str]] = None,
         extra_metadata: Optional[Dict[str, Any]] = None,
         enable_contextual_enrichment: bool = False,
+        use_llm_contextualizer: bool = False,
     ) -> List[ChunkRecord]:
         """Splits a raw document into deterministic ChunkRecord items."""
         cleaned = content.strip()
@@ -253,6 +304,7 @@ class ChunkingEngine:
                 source,
                 base_meta,
                 enable_contextual_enrichment=enable_contextual_enrichment,
+                use_llm_contextualizer=use_llm_contextualizer,
             )
         elif strategy == "contextual_recursive":
             records = self._chunk_contextual_recursive(
@@ -262,6 +314,7 @@ class ChunkingEngine:
                 source,
                 base_meta,
                 enable_contextual_enrichment=enable_contextual_enrichment,
+                use_llm_contextualizer=use_llm_contextualizer,
             )
         else:
             records = self._chunk_fixed(cleaned, doc_id, title, source, base_meta)
@@ -321,6 +374,7 @@ class ChunkingEngine:
         source: str,
         base_meta: Dict[str, Any],
         enable_contextual_enrichment: bool = False,
+        use_llm_contextualizer: bool = False,
     ) -> List[ChunkRecord]:
         """Small-to-Big (Parent-Child) strategy with Table-Header, Fenced-Code & Optional Contextual Prefix:
         - Indexes fine-grained Child chunks with Contextual Headers for high retrieval precision.
@@ -338,11 +392,18 @@ class ChunkingEngine:
                 parent_header = format_contextual_header(
                     title, source, section_name, code_symbols=parent_code_info["symbols"]
                 )
-                parent_ctx = (
-                    generate_contextual_prefix(text, title, section_name, parent_code_info["symbols"])
-                    if enable_contextual_enrichment
-                    else ""
-                )
+                if enable_contextual_enrichment:
+                    parent_ctx, ctx_backend = generate_contextual_prefix(
+                        text,
+                        title,
+                        section_name,
+                        parent_code_info["symbols"],
+                        chunk_text=p_text,
+                        use_llm=use_llm_contextualizer,
+                        return_backend=True,
+                    )
+                else:
+                    parent_ctx, ctx_backend = "", "disabled"
                 enriched_parent = f"{parent_header}{parent_ctx}{p_text}"
 
                 child_texts = self._split_preserving_structure(p_text, self.child_splitter)
@@ -354,11 +415,18 @@ class ChunkingEngine:
                     child_symbols = child_code_info["symbols"] or parent_code_info["symbols"]
                     child_langs = child_code_info["languages"] or parent_code_info["languages"]
                     header = format_contextual_header(title, source, section_name, code_symbols=child_symbols)
-                    ctx_prefix = (
-                        generate_contextual_prefix(text, title, section_name, child_symbols)
-                        if enable_contextual_enrichment
-                        else ""
-                    )
+                    if enable_contextual_enrichment:
+                        ctx_prefix, child_backend = generate_contextual_prefix(
+                            text,
+                            title,
+                            section_name,
+                            child_symbols,
+                            chunk_text=c_text,
+                            use_llm=use_llm_contextualizer,
+                            return_backend=True,
+                        )
+                    else:
+                        ctx_prefix, child_backend = "", "disabled"
                     enriched_child = f"{header}{ctx_prefix}{c_text}"
                     chunk_id = f"chk_{compute_content_hash(parent_id, enriched_child)}"
                     meta = {
@@ -366,6 +434,7 @@ class ChunkingEngine:
                         "parent_id": parent_id,
                         "section": section_name,
                         "contextual_enriched": enable_contextual_enrichment,
+                        "contextualizer_backend": child_backend,
                     }
                     if child_symbols:
                         meta["code_symbols"] = child_symbols
@@ -399,6 +468,7 @@ class ChunkingEngine:
         source: str,
         base_meta: Dict[str, Any],
         enable_contextual_enrichment: bool = False,
+        use_llm_contextualizer: bool = False,
     ) -> List[ChunkRecord]:
         """Section-aware recursive chunking with code-block preservation and contextual headers."""
         records: List[ChunkRecord] = []
@@ -412,11 +482,18 @@ class ChunkingEngine:
                 header = format_contextual_header(
                     title, source, section_name, code_symbols=code_info["symbols"]
                 )
-                ctx_prefix = (
-                    generate_contextual_prefix(text, title, section_name, code_info["symbols"])
-                    if enable_contextual_enrichment
-                    else ""
-                )
+                if enable_contextual_enrichment:
+                    ctx_prefix, ctx_backend = generate_contextual_prefix(
+                        text,
+                        title,
+                        section_name,
+                        code_info["symbols"],
+                        chunk_text=split_text,
+                        use_llm=use_llm_contextualizer,
+                        return_backend=True,
+                    )
+                else:
+                    ctx_prefix, ctx_backend = "", "disabled"
                 enriched = f"{header}{ctx_prefix}{split_text}"
                 chunk_id = f"chk_{compute_content_hash(doc_id, enriched)}"
                 parent_id = f"par_{chunk_id[4:20]}"
@@ -424,6 +501,7 @@ class ChunkingEngine:
                     **base_meta,
                     "section": section_name,
                     "contextual_enriched": enable_contextual_enrichment,
+                    "contextualizer_backend": ctx_backend,
                 }
                 if code_info["symbols"]:
                     meta["code_symbols"] = code_info["symbols"]
