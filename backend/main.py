@@ -10,9 +10,10 @@ Orchestrates:
 
 from contextlib import asynccontextmanager
 import time
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import PlainTextResponse, StreamingResponse
 
+from app.a2a.server import a2a_manager, build_agent_card
 from app.agent.graph import execute_rag_pipeline, stream_rag_pipeline_sse
 from app.agent.sql_tool import sql_inventory_tool
 from app.agent.structured import execute_structured_taxonomy_query
@@ -488,6 +489,27 @@ async def orchestrate_specialist_subagents(req: OrchestrateRequest):
         return supervisor_orchestrator.orchestrate(req)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Multi-agent orchestration failed: {exc}") from exc
+
+
+@app.get("/.well-known/agent.json")
+async def get_a2a_agent_card(request: Request):
+    """P3.4 Google A2A Agent Card discovery endpoint advertising skills, streaming, and DelegatedRBAC auth."""
+    base = str(request.base_url).rstrip("/")
+    return build_agent_card(base_url=base)
+
+
+@app.post("/a2a")
+async def handle_a2a_jsonrpc_endpoint(request: Request):
+    """P3.4 Google A2A JSON-RPC 2.0 endpoint (tasks/send, tasks/get, tasks/cancel, tasks/sendSubscribe SSE)."""
+    payload = await request.json()
+    peer_agent_id = request.headers.get("X-Peer-Agent-Id")
+    if payload.get("method") == "tasks/sendSubscribe":
+        return StreamingResponse(
+            a2a_manager.stream_task_sse(payload, peer_agent_id=peer_agent_id),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    return a2a_manager.handle_jsonrpc(payload, peer_agent_id=peer_agent_id)
 
 
 @app.post("/evaluate")
