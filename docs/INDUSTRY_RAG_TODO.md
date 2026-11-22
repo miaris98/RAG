@@ -131,8 +131,29 @@
   - *Inspired by:* **Anthropic Multi-Agent Research**, **Uber (Genie)**, **LangGraph Supervisor**
   - Implement a **Supervisor Agent** that decomposes complex queries and delegates in parallel to isolated, least-privilege **Specialist Subagents**: `retrieval_specialist` (Tri-Modal Hybrid RAG), `sql_ops_specialist` (read-only live SQL inventory/incidents), `compliance_auditor` (guardrails + structured policy rules + P2.1 hallucination judge), and `web_researcher` (circuit-breaker external search).
   - Emit per-subagent child spans into `TraceCollector` for waterfall visualization and expose multi-agent delegation telemetry in Gradio Tab 2.
-- [ ] **P3.4 Google A2A (Agent-to-Agent) Protocol Server & Confused-Deputy Security** (`backend/app/a2a/`, `GET /.well-known/agent.json`, `POST /a2a`)
+- [x] **P3.4 Google A2A (Agent-to-Agent) Protocol Server & Confused-Deputy Security** (`backend/app/a2a/`, `GET /.well-known/agent.json`, `POST /a2a`)
   - *Inspired by:* **Google A2A Protocol Specification**, **OWASP Agentic Top 10**
   - Publish a spec-compliant **A2A Agent Card** at `GET /.well-known/agent.json` advertising skills (`enterprise_rag_qa`, `live_sql_ops_audit`, `taxonomy_rule_classifier`, `multi_agent_research`), capabilities, and RBAC auth requirements.
   - Implement JSON-RPC 2.0 `POST /a2a` supporting `tasks/send`, `tasks/get`, `tasks/cancel`, and SSE streaming (`tasks/sendSubscribe`) with typed A2A `Artifact` outputs and `submitted -> working -> completed | failed | canceled` task states.
   - Enforce **A2A anti-confused-deputy RBAC delegation** (intersecting peer-agent allowed scopes with caller roles) and log every cross-agent A2A handoff to the SHA-256 tamper-evident audit ledger.
+
+### P4 — Resilient Microservices Architecture (Fault Tolerance, Traffic, Data, Zero Trust & Chaos)
+- [ ] **P4.1 Resilience & Fault Tolerance (Retries + Jitter, Bulkheads, Graceful Degradation)** (`backend/app/resilience/`)
+  - Add bounded **Retries with Exponential Backoff & Decorrelated Jitter** around Ollama, DuckDuckGo, Milvus, and RabbitMQ clients (paired with existing Circuit Breakers).
+  - Add per-dependency **Bulkhead Isolation** (`BulkheadPool` concurrency semaphores / isolated pools for `milvus_vector`, `ollama_llm`, `sql_opsbot`, `web_search`) with Prometheus saturation gauges.
+  - Formalize a **Graceful Degradation Matrix** (`L0 Full -> L1 Extractive/Cached -> L2 BM25+Graph -> L3 Cache-Only`) exposed at `GET /health/resilience`.
+- [ ] **P4.2 Service Discovery, API Gateway & Service Mesh Readiness** (`backend/app/gateway/`, `deploy/mesh/`)
+  - Implement a **Dynamic Service Discovery Registry** with heartbeat TTL, health checks, and stale-instance eviction (`POST /discovery/register`, `GET /discovery/services`) compatible with Consul / Kubernetes DNS.
+  - Add centralized **API Gateway Middleware** for per-tenant/per-IP token-bucket rate limiting (`429 Retry-After`), `X-Request-Id` propagation, and security headers.
+  - Add **Service Mesh / mTLS** manifests (`deploy/mesh/` Istio `PeerAuthentication` `STRICT` mTLS + `DestinationRule` retry/outlier policies).
+- [ ] **P4.3 Decentralized Data Management: Database-per-Service, Saga Pattern & CQRS** (`backend/app/data/`)
+  - Enforce **Database-per-Service** boundaries across Vector/Search, SQL OpsBot, Audit Ledger, and Feedback stores via strict service interfaces.
+  - Implement **Saga Pattern with Compensating Transactions** (`IngestionSaga` rolling back partial Vector/BM25/Graph writes on step failure; `GDPRErasureSaga` coordinating multi-store erasure with compensation logs).
+  - Implement **CQRS (Command Query Responsibility Segregation)** separating write commands (`/ingest`, `/ingest/cdc`, `DELETE /documents/{doc_id}`) from lock-free read-optimized materialized projections serving `/documents`, `/corpus/shards-and-clusters`, and `/compliance/audit-report`.
+- [ ] **P4.4 Zero Trust Security & Least-Privilege Secrets Hygiene** (`backend/app/security/zero_trust.py`)
+  - Implement **Zero Trust Short-Lived Service JWTs** (`iss`, `sub`, `aud`, `roles`, `exp <= 300s`, `jti` replay cache) validated via `X-Service-Token` across internal service & A2A peer boundaries.
+  - Add a **Least-Privilege Secrets Provider** abstraction (env + HashiCorp Vault/KMS adapter) with automated secret-leakage redaction in logs, traces, and audit events.
+- [ ] **P4.5 Immutable IaC, Progressive Delivery & Chaos Engineering** (`deploy/`, `backend/app/resilience/chaos.py`)
+  - Add **Immutable Infrastructure & IaC** manifests (`deploy/k8s/` Deployments, Services, HPA, NetworkPolicies, PDBs + `deploy/terraform/` skeleton).
+  - Implement **Progressive Delivery** via a runtime `FeatureFlagManager` (`GET/POST /ops/feature-flags`) supporting deterministic percentage **Canary** rollouts (`1%–100%`) and **Blue-Green** release track tagging (`X-Release-Track`).
+  - Implement a gated **Chaos Engineering Fault Injector** (`POST /ops/chaos`) to inject controlled latency spikes or downstream faults (`ollama`, `duckduckgo`, `milvus`) and verify Circuit Breakers, Bulkheads, and Graceful Degradation in automated tests & live demos.
