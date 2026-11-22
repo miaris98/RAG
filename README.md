@@ -2,7 +2,13 @@
 
 An interview-ready, production-grade **Retrieval-Augmented Generation (RAG)** microservices platform orchestrated with **Docker Compose**, **FastAPI**, **Milvus**, **RabbitMQ**, **LangGraph**, **Ollama**, **Gradio**, **Prometheus**, **Grafana**, and **Langfuse-compatible Distributed Tracing**.
 
-> **Deep-Dive Companion Docs:**
+> **Spec-Kit Architecture & Companion Docs:**
+> - 📜 [**Engineering Constitution (`.specify/memory/constitution.md`)**](.specify/memory/constitution.md) — 9 non-negotiable architectural & security invariants enforced by CI.
+> - 📐 [**System Specification (`specs/001-staff-rag-platform/spec.md`)**](specs/001-staff-rag-platform/spec.md) — Personas, user journeys, `FR-001`–`FR-025`, and SLOs.
+> - 🏗️ [**Architecture Plan & Module Blueprint (`specs/001-staff-rag-platform/plan.md`)**](specs/001-staff-rag-platform/plan.md) — Mermaid diagrams & complete 14-package codebase catalog.
+> - 🗄️ [**Data Model, Sagas & CQRS (`specs/001-staff-rag-platform/data-model.md`)**](specs/001-staff-rag-platform/data-model.md) — 21 Pydantic schemas, DB-per-Service boundaries & audit ledger format.
+> - 🔌 [**API, MCP, Google A2A & Prometheus Contracts (`specs/001-staff-rag-platform/contracts/api-and-protocols.md`)**](specs/001-staff-rag-platform/contracts/api-and-protocols.md) — Zero-drift reference for all 46 endpoints, 5 MCP tools & 4 A2A skills.
+> - 🛠️ [**Operations, Chaos & Security Runbook (`specs/001-staff-rag-platform/operations-runbook.md`)**](specs/001-staff-rag-platform/operations-runbook.md) — Deployment, Grafana, Canary/Blue-Green, Chaos game-days & GDPR SOPs.
 > - 📖 [**Staff RAG Interview Guide (`docs/INTERVIEW_GUIDE.md`)**](docs/INTERVIEW_GUIDE.md) — Mathematical formulations (RRF, Cross-Encoder Calibration, NDCG@K), 6 prototype anti-patterns fixed, and system design Q&A.
 > - 🌐 [**50-Company RAG Tech Blog Study (`docs/INDUSTRY_RAG_TODO.md`)**](docs/INDUSTRY_RAG_TODO.md) — Production patterns from Google, Netflix, Anthropic, Uber, DoorDash, Bloomberg, Capital One, and more.
 
@@ -10,7 +16,7 @@ An interview-ready, production-grade **Retrieval-Augmented Generation (RAG)** mi
 
 ## 🎯 60-Second Interview Elevator Pitch
 
-> *"Instead of a naive dense-only prototype, I built a modular, 100% local **Production RAG Platform** with **Pre-Filtered Multi-Tenant RBAC**, **Table-, Fenced-Code & AST-Symbol-Aware Parent-Child Chunking** with SHA-256 deduplication, **Anthropic Contextual Enrichment**, **Shopify/Notion CDC Incremental Upserts**, and a **Tri-Modal Hybrid Retrieval Engine** (Milvus Dense + BM25 + 1-hop Entity Knowledge Graph fused via **Reciprocal Rank Fusion** with **Freshness Time-Decay & Version Precedence**, followed by **Cross-Encoder Reranking**, **MMR Diversity**, and **Lost-in-the-Middle** U-shaped reordering). Orchestration runs on a **cyclic LangGraph StateGraph** implementing **Adaptive Query Routing**, **Corrective RAG (CRAG)** gating, **Self-RAG** faithfulness verification with **structured `[Doc i]` inline citations**, and **DoorDash Inverted RAG / Ramp Rule-Grounded Structured JSON Classification**. The system includes **PII & Prompt Injection Guardrails**, **GDPR Article 17 surgical erasure**, a **tamper-evident SHA-256 hash-chained audit ledger**, **Zendesk-style user feedback telemetry**, **hierarchical distributed span waterfalls**, **Prometheus/Grafana**, **P2.1 LLM-as-a-Judge & Human Calibration**, **Perplexity Late Chunking**, **NVIDIA PDF Table Extraction**, **Spotify Semantic IDs**, **Airbnb Tenant Shard Routing**, **LinkedIn Shared-Prefix KV Caching**, **Instacart Cache Pre-Warming**, **Agoda OpsBot Read-Only SQL Live Inventory**, **Parallel Specialist Subagents (`POST /agent/orchestrate`)**, **Google A2A Protocol (`/.well-known/agent.json`, `POST /a2a`) with Anti-Confused-Deputy RBAC**, **Resilient Microservices Patterns** (Retries+Jitter, Bulkheads, Graceful Degradation L0–L3, Dynamic Service Discovery, API Gateway Rate Limiting, Istio mTLS Mesh, Saga Compensating Rollbacks, CQRS Read Projections, Zero Trust Short-Lived Service JWTs, Immutable K8s/Terraform IaC, Canary/Blue-Green Feature Flags & Gated Chaos Engineering), and an automated **85-test TDD & 5-mode IR Ablation suite**."*
+> *"Instead of a naive dense-only prototype, I built a modular, 100% local **Production RAG Platform** with **Pre-Filtered Multi-Tenant RBAC**, **Table-, Fenced-Code & AST-Symbol-Aware Parent-Child Chunking** with SHA-256 deduplication, **Anthropic Contextual Enrichment**, **Shopify/Notion CDC Incremental Upserts**, and a **Tri-Modal Hybrid Retrieval Engine** (Milvus Dense + BM25 + 1-hop Entity Knowledge Graph fused via **Reciprocal Rank Fusion** with **Freshness Time-Decay & Version Precedence**, followed by **Cross-Encoder Reranking**, **MMR Diversity**, and **Lost-in-the-Middle** U-shaped reordering). Orchestration runs on a **cyclic LangGraph StateGraph** implementing **Adaptive Query Routing**, **Corrective RAG (CRAG)** gating, **Self-RAG** faithfulness verification with **structured `[Doc i]` inline citations**, and **DoorDash Inverted RAG / Ramp Rule-Grounded Structured JSON Classification**. The system includes **PII & Prompt Injection Guardrails**, **GDPR Article 17 surgical erasure**, a **tamper-evident SHA-256 hash-chained audit ledger**, **Zendesk-style user feedback telemetry**, **hierarchical distributed span waterfalls**, **Prometheus/Grafana**, **P2.1 LLM-as-a-Judge & Human Calibration**, **Perplexity Late Chunking**, **NVIDIA PDF Table Extraction**, **Spotify Semantic IDs**, **Airbnb Tenant Shard Routing**, **LinkedIn Shared-Prefix KV Caching**, **Instacart Cache Pre-Warming**, **Agoda OpsBot Read-Only SQL Live Inventory**, **Parallel Specialist Subagents (`POST /agent/orchestrate`)**, **Google A2A Protocol (`/.well-known/agent.json`, `POST /a2a`) with Anti-Confused-Deputy RBAC**, **Resilient Microservices Patterns** (Retries+Jitter, Bulkheads, Graceful Degradation L0–L3, Dynamic Service Discovery, API Gateway Rate Limiting, Istio mTLS Mesh, Saga Compensating Rollbacks, CQRS Read Projections, Zero Trust Short-Lived Service JWTs, Immutable K8s/Terraform IaC, Canary/Blue-Green Feature Flags & Gated Chaos Engineering), and an automated **89-test TDD & 5-mode IR Ablation suite**."*
 
 ```mermaid
 flowchart LR
@@ -117,7 +123,7 @@ Open **[http://127.0.0.1:7860](http://127.0.0.1:7860)** and walk the interviewer
 
 ---
 
-## 🧪 Step 3: Run Automated Tests (`85` TDD, Microservices, Security, Subagents, A2A, Judge, CDC & GDPR Tests)
+## 🧪 Step 3: Run Automated Tests (`89` TDD, Spec-Kit, Microservices, Security, Subagents, A2A, Judge, CDC & GDPR Tests)
 
 ```powershell
 cd C:\Users\miari\Desktop\RAG
@@ -137,6 +143,10 @@ RAG/
 ├── observability/
 │   ├── prometheus.yml             # Scrapes fastapi-backend:8000/metrics/prometheus every 5s
 │   └── grafana/                   # Pre-provisioned Prometheus datasource & RAG dashboard
+├── .specify/
+│   └── memory/constitution.md     # Spec-Kit Engineering Constitution (9 CI-enforced invariants)
+├── specs/
+│   └── 001-staff-rag-platform/    # Spec-Kit System Spec, Architecture Plan, Data Model, API/MCP/A2A Contracts & Ops Runbook
 ├── deploy/
 │   ├── mesh/                      # Istio STRICT mTLS PeerAuthentication & DestinationRule retry/outlier manifests
 │   ├── k8s/                       # Immutable K8s Deployment, Service, HPA, NetworkPolicy & PDB manifests
@@ -161,7 +171,7 @@ RAG/
 │   ├── mcp_server.py              # RBAC-scoped MCP server (5 tools: retrieve, ingest, GDPR erase, SQL, taxonomy)
 │   ├── main.py                    # FastAPI gateway
 │   ├── debug.py                   # CLI diagnostic & ablation inspector
-│   └── tests/                     # 85 automated TDD unit, integration, microservices, subagents, A2A, judge, CDC, PDF, SQL, GDPR & OWASP tests
+│   └── tests/                     # 89 automated TDD unit, integration, spec-kit, microservices, subagents, A2A, judge, CDC, PDF, SQL, GDPR & OWASP tests
 ├── frontend/
 │   └── app.py                     # 4-Tab Gradio Observability, Eval & Compliance Audit Studio
 ├── docs/
