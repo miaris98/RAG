@@ -16,6 +16,7 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 from app.agent.graph import execute_rag_pipeline, stream_rag_pipeline_sse
 from app.agent.sql_tool import sql_inventory_tool
 from app.agent.structured import execute_structured_taxonomy_query
+from app.agent.subagents import supervisor_orchestrator
 from app.config import settings
 from app.evaluation.benchmark import run_ablation_benchmark
 from app.guardrails.audit import audit_logger
@@ -24,6 +25,8 @@ from app.models import (
     CDCEventRequest,
     DocumentInput,
     EvaluationRequest,
+    OrchestrateRequest,
+    OrchestrateResponse,
     PrewarmCacheRequest,
     QueryInput,
     RetrieveDebugRequest,
@@ -469,6 +472,22 @@ async def run_readonly_sql_inventory_query(req: SQLQueryRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"SQL query failed: {exc}") from exc
+
+
+@app.get("/agent/subagents")
+async def list_specialist_subagents():
+    """P3.3 Lists registered least-privilege specialist subagents and their scoped toolsets."""
+    subs = supervisor_orchestrator.list_subagents()
+    return {"count": len(subs), "subagents": subs}
+
+
+@app.post("/agent/orchestrate", response_model=OrchestrateResponse)
+async def orchestrate_specialist_subagents(req: OrchestrateRequest):
+    """P3.3 Parallel Supervisor orchestration across retrieval, SQL OpsBot, compliance auditor, and web specialists."""
+    try:
+        return supervisor_orchestrator.orchestrate(req)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Multi-agent orchestration failed: {exc}") from exc
 
 
 @app.post("/evaluate")
