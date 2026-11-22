@@ -1,0 +1,61 @@
+# P4.2 Istio Service Mesh Configuration: STRICT mTLS, Bulkhead Pools, Outlier Circuit Breaking & Canary Traffic
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: staff-rag-strict-mtls
+  namespace: rag-prod
+spec:
+  mtls:
+    mode: STRICT
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: rag-gateway-dr
+  namespace: rag-prod
+spec:
+  host: rag-gateway-api.rag-prod.svc.cluster.local
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 64
+        maxRequestsPerConnection: 10
+    outlierDetection:
+      consecutive5xxErrors: 3
+      interval: 10s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+  subsets:
+    - name: stable
+      labels:
+        release-track: blue
+    - name: canary
+      labels:
+        release-track: canary
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: rag-gateway-vs
+  namespace: rag-prod
+spec:
+  hosts:
+    - rag-gateway-api.rag-prod.svc.cluster.local
+  http:
+    - retries:
+        attempts: 3
+        perTryTimeout: 2s
+        retryOn: 5xx,reset,connect-failure,refused-stream
+      route:
+        - destination:
+            host: rag-gateway-api.rag-prod.svc.cluster.local
+            subset: stable
+          weight: 95
+        - destination:
+            host: rag-gateway-api.rag-prod.svc.cluster.local
+            subset: canary
+          weight: 5
