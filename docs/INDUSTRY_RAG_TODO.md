@@ -142,7 +142,7 @@
   - Add bounded **Retries with Exponential Backoff & Decorrelated Jitter** around Ollama, DuckDuckGo, Milvus, and RabbitMQ clients (paired with existing Circuit Breakers).
   - Add per-dependency **Bulkhead Isolation** (`BulkheadPool` concurrency semaphores / isolated pools for `milvus_vector`, `ollama_llm`, `sql_opsbot`, `web_search`) with Prometheus saturation gauges.
   - Formalize a **Graceful Degradation Matrix** (`L0 Full -> L1 Extractive/Cached -> L2 BM25+Graph -> L3 Cache-Only`) exposed at `GET /health/resilience`.
-- [ ] **P4.2 Service Discovery, API Gateway & Service Mesh Readiness** (`backend/app/gateway/`, `deploy/mesh/`)
+- [x] **P4.2 Service Discovery, API Gateway & Service Mesh Readiness** (`backend/app/gateway/`, `deploy/mesh/`)
   - Implement a **Dynamic Service Discovery Registry** with heartbeat TTL, health checks, and stale-instance eviction (`POST /discovery/register`, `GET /discovery/services`) compatible with Consul / Kubernetes DNS.
   - Add centralized **API Gateway Middleware** for per-tenant/per-IP token-bucket rate limiting (`429 Retry-After`), `X-Request-Id` propagation, and security headers.
   - Add **Service Mesh / mTLS** manifests (`deploy/mesh/` Istio `PeerAuthentication` `STRICT` mTLS + `DestinationRule` retry/outlier policies).

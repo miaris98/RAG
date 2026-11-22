@@ -20,6 +20,7 @@ from app.agent.structured import execute_structured_taxonomy_query
 from app.agent.subagents import supervisor_orchestrator
 from app.config import settings
 from app.evaluation.benchmark import run_ablation_benchmark
+from app.gateway import APIGatewayMiddleware, gateway_rate_limiter, service_registry
 from app.guardrails.audit import audit_logger
 from app.ingestion.pipeline import ingestion_pipeline
 from app.models import (
@@ -32,6 +33,7 @@ from app.models import (
     QueryInput,
     RetrieveDebugRequest,
     SQLQueryRequest,
+    ServiceRegistrationRequest,
     StructuredQueryRequest,
     StructuredQueryResponse,
     UserFeedbackRequest,
@@ -69,6 +71,40 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan,
 )
+app.add_middleware(APIGatewayMiddleware)
+
+
+@app.post("/discovery/register")
+async def register_service_instance(req: ServiceRegistrationRequest):
+    """P4.2 Dynamic Service Discovery instance registration."""
+    rec = service_registry.register(
+        service_name=req.service_name,
+        instance_id=req.instance_id,
+        host=req.host,
+        port=req.port,
+        ttl_sec=req.ttl_sec,
+        version=req.version,
+        metadata=req.metadata,
+    )
+    return {"status": "registered", "instance": rec}
+
+
+@app.post("/discovery/heartbeat/{service_name}/{instance_id}")
+async def heartbeat_service_instance(service_name: str, instance_id: str):
+    """P4.2 Refreshes TTL heartbeat for a registered microservice instance."""
+    rec = service_registry.heartbeat(service_name, instance_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Service instance not found")
+    return {"status": "healthy", "instance": rec}
+
+
+@app.get("/discovery/services")
+async def list_discovered_services():
+    """P4.2 Lists live healthy microservice instances and API Gateway rate-limiter stats."""
+    return {
+        **service_registry.list_services(),
+        "gateway_rate_limiter": gateway_rate_limiter.stats(),
+    }
 
 
 @app.get("/health")

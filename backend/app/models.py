@@ -349,3 +349,15 @@ class OrchestrateResponse(BaseModel):
     waterfall_markdown: str
     total_latency_ms: float
     audit_event_hash: str
+
+
+class ServiceRegistrationRequest(BaseModel):
+    """P4.2 Dynamic Service Discovery registration payload."""
+
+    service_name: str = Field(..., min_length=1, max_length=100)
+    instance_id: str = Field(..., min_length=1, max_length=100)
+    host: str = Field(..., min_length=1, max_length=200)
+    port: int = Field(..., ge=1, le=65535)
+    ttl_sec: float = Field(default=30.0, ge=0.01, le=86400.0)
+    version: str = Field(default="1.0.0", max_length=40)
+    metadata: Optional[Dict[str, Any]] = Field(default=None)
