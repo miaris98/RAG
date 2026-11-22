@@ -382,25 +382,32 @@ class HybridRetrievalEngine:
                     if "_" in tok or "-" in tok:
                         query_entities_set.add(tok)
 
-            # 1. Dense Bi-Encoder Rankings (Pre-Filtered to authorized_ids)
+            # 1. Dense Bi-Encoder Rankings (Pre-Filtered to authorized_ids, guarded by Milvus Bulkhead & Chaos)
             t_dense = time.perf_counter()
             dense_ranks_per_chunk: Dict[str, int] = {}
             dense_scores_per_chunk: Dict[str, float] = {}
             if mode in ("dense", "hybrid_rrf", "hybrid_rerank", "hybrid_graph_rerank"):
-                embedder = ModelRegistry.get_embeddings()
-                for q in clean_queries:
-                    q_vec = embedder.embed_query(q)
-                    scored = [
-                        (cid, cosine_similarity(q_vec, self._dense_vectors[cid]))
-                        for cid in self._chunk_order
-                        if cid in authorized_ids
-                    ]
-                    scored.sort(key=lambda x: x[1], reverse=True)
-                    for rank_idx, (cid, sim) in enumerate(scored[: settings.retrieval_top_k_dense], start=1):
-                        if cid not in dense_ranks_per_chunk or rank_idx < dense_ranks_per_chunk[cid]:
-                            dense_ranks_per_chunk[cid] = rank_idx
-                        if cid not in dense_scores_per_chunk or sim > dense_scores_per_chunk[cid]:
-                            dense_scores_per_chunk[cid] = sim
+                from app.resilience import bulkhead_registry, chaos_controller
+
+                try:
+                    with bulkhead_registry.get("milvus_vector").slot(timeout_sec=0.2):
+                        chaos_controller.maybe_inject("milvus")
+                        embedder = ModelRegistry.get_embeddings()
+                        for q in clean_queries:
+                            q_vec = embedder.embed_query(q)
+                            scored = [
+                                (cid, cosine_similarity(q_vec, self._dense_vectors[cid]))
+                                for cid in self._chunk_order
+                                if cid in authorized_ids
+                            ]
+                            scored.sort(key=lambda x: x[1], reverse=True)
+                            for rank_idx, (cid, sim) in enumerate(scored[: settings.retrieval_top_k_dense], start=1):
+                                if cid not in dense_ranks_per_chunk or rank_idx < dense_ranks_per_chunk[cid]:
+                                    dense_ranks_per_chunk[cid] = rank_idx
+                                if cid not in dense_scores_per_chunk or sim > dense_scores_per_chunk[cid]:
+                                    dense_scores_per_chunk[cid] = sim
+                except Exception as exc:
+                    print(f"[HybridRetrievalEngine] Dense/Milvus tier degraded gracefully: {exc}")
             substage_latencies["dense_search_ms"] = round((time.perf_counter() - t_dense) * 1000.0, 3)
 
             # 2. Sparse BM25 Rankings (Pre-Filtered to authorized_ids)

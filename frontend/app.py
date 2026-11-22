@@ -168,6 +168,31 @@ def fetch_compliance_audit_dashboard() -> Tuple[str, str, str, str]:
         )
     except Exception:
         pass
+    try:
+        res_health = requests.get(f"{BACKEND_URL}/health/resilience", timeout=8).json()
+        deg = res_health.get("degradation") or {}
+        bhs = res_health.get("bulkheads") or {}
+        bh_str = ", ".join(
+            f"`{k}:{v.get('in_flight', 0)}/{v.get('max_concurrent', 0)} (acq={v.get('total_acquired', 0)})`"
+            for k, v in bhs.items()
+        )
+        disc = requests.get(f"{BACKEND_URL}/discovery/services", timeout=8).json()
+        cqrs = requests.get(f"{BACKEND_URL}/cqrs/read-model", timeout=8).json()
+        ff = requests.get(f"{BACKEND_URL}/ops/feature-flags", timeout=8).json()
+        ch = requests.get(f"{BACKEND_URL}/ops/chaos", timeout=8).json()
+        extra_sections.extend(
+            [
+                "\n### 🧩 P4 Microservices Resilience, Discovery, CQRS & Progressive Delivery",
+                f"- **Graceful Degradation Tier:** `{deg.get('level', 'N/A')}` — {deg.get('summary', '')}",
+                f"- **Bulkhead Compartments:** {bh_str or '`none`'}",
+                f"- **Dynamic Service Discovery:** `{disc.get('total_instances', 0)}` live instances across `{len(disc.get('services') or {})}` services",
+                f"- **CQRS Read Projection:** `docs={cqrs.get('total_documents', 0)}`, `chunks={cqrs.get('total_chunks', 0)}`, `version={cqrs.get('projection_version', 0)}`",
+                f"- **Progressive Delivery:** `X-Release-Track={ff.get('active_release_track', 'blue')}` | "
+                f"**Chaos Fault Injector:** `enabled={ch.get('enabled', False)}` (`target={ch.get('target')}`, `mode={ch.get('mode')}`, `faults={ch.get('total_faults_injected', 0)}`)",
+            ]
+        )
+    except Exception:
+        pass
     dossier_md = dossier_md + "\n" + "\n".join(extra_sections)
 
     # Format Distributed Traces (Langfuse / Span Waterfall)
@@ -479,6 +504,64 @@ def handle_sql_opsbot_query_ui(sql_text: str) -> str:
         return json.dumps(resp.json(), indent=2)
     except Exception as exc:
         return json.dumps({"error": str(exc)}, indent=2)
+
+
+def handle_update_feature_flag_ui(
+    flag_name: str,
+    enabled: bool,
+    rollout_pct: int,
+    release_track: str,
+) -> str:
+    """Updates a Canary percentage feature flag & Blue-Green release track via POST /ops/feature-flags."""
+    try:
+        resp = requests.post(
+            f"{BACKEND_URL}/ops/feature-flags",
+            json={
+                "flag_name": (flag_name or "rag_canary_reranker").strip(),
+                "enabled": bool(enabled),
+                "rollout_percentage": int(rollout_pct),
+                "active_release_track": (release_track or "blue").strip(),
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        d = resp.json()
+        return (
+            f"✅ **Progressive Delivery Updated:** `X-Release-Track={d.get('active_release_track')}` | "
+            f"`{flag_name}` → `enabled={enabled}`, `rollout={int(rollout_pct)}%`"
+        )
+    except Exception as exc:
+        return f"❌ Feature Flag update failed: `{exc}`"
+
+
+def handle_update_chaos_ui(
+    enabled: bool,
+    target: str,
+    mode: str,
+    failure_rate: float,
+    latency_ms: int,
+) -> str:
+    """Toggles gated Chaos Engineering fault injection via POST /ops/chaos."""
+    try:
+        resp = requests.post(
+            f"{BACKEND_URL}/ops/chaos",
+            json={
+                "enabled": bool(enabled),
+                "target": target or "ollama",
+                "mode": mode or "failure",
+                "failure_rate": float(failure_rate),
+                "latency_ms": int(latency_ms),
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        d = resp.json()
+        return (
+            f"🧪 **Chaos Controller Updated:** `enabled={d.get('enabled')}`, `target={d.get('target')}`, "
+            f"`mode={d.get('mode')}`, `failure_rate={d.get('failure_rate')}`, `latency_ms={d.get('latency_ms')}`"
+        )
+    except Exception as exc:
+        return f"❌ Chaos update failed: `{exc}`"
 
 
 def handle_seed_sample_corpus(strategy: str = "parent_child") -> str:
@@ -892,6 +975,25 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
                 )
                 sql_run_btn = gr.Button("▶️ Run Read-Only SQL Query")
                 sql_result_code = gr.Code(label="SQL Result JSON", language="json", value="{}")
+            with gr.Accordion("⚡ P4 Microservices Ops: Canary Flags, Blue-Green Track & Chaos Injector", open=False):
+                with gr.Row():
+                    ff_name_input = gr.Textbox(label="Canary Flag Name", value="rag_canary_reranker")
+                    ff_enabled_chk = gr.Checkbox(value=True, label="Flag Enabled")
+                    ff_pct_slider = gr.Slider(minimum=0, maximum=100, value=10, step=5, label="Canary Rollout %")
+                    ff_track_dd = gr.Dropdown(choices=["blue", "green", "canary"], value="blue", label="Blue-Green Track")
+                ff_apply_btn = gr.Button("🚦 Apply Progressive Delivery Policy")
+                with gr.Row():
+                    chaos_enabled_chk = gr.Checkbox(value=False, label="Enable Gated Chaos Injection")
+                    chaos_target_dd = gr.Dropdown(
+                        choices=["ollama", "duckduckgo", "milvus", "rabbitmq", "sql_opsbot"],
+                        value="ollama",
+                        label="Chaos Target",
+                    )
+                    chaos_mode_dd = gr.Dropdown(choices=["failure", "latency"], value="failure", label="Chaos Mode")
+                    chaos_rate_slider = gr.Slider(minimum=0.0, maximum=1.0, value=0.0, step=0.1, label="Failure Rate")
+                    chaos_lat_slider = gr.Slider(minimum=0, maximum=2000, value=0, step=50, label="Latency (ms)")
+                chaos_apply_btn = gr.Button("🧪 Update Chaos Controller")
+                p4_ops_status_md = gr.Markdown(value="_Progressive Delivery & Chaos controls ready._")
             audit_traces_md = gr.Markdown(value="_Distributed trace waterfall will appear here._")
             audit_ledger_md = gr.Markdown(value="_Tamper-evident SHA-256 audit ledger will appear here._")
             prom_metrics_code = gr.Code(
@@ -988,6 +1090,16 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
         handle_sql_opsbot_query_ui,
         inputs=[sql_query_input],
         outputs=sql_result_code,
+    )
+    ff_apply_btn.click(
+        handle_update_feature_flag_ui,
+        inputs=[ff_name_input, ff_enabled_chk, ff_pct_slider, ff_track_dd],
+        outputs=p4_ops_status_md,
+    )
+    chaos_apply_btn.click(
+        handle_update_chaos_ui,
+        inputs=[chaos_enabled_chk, chaos_target_dd, chaos_mode_dd, chaos_rate_slider, chaos_lat_slider],
+        outputs=p4_ops_status_md,
     )
     erase_btn.click(
         handle_gdpr_erasure,
