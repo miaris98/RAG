@@ -153,7 +153,7 @@
 - [x] **P4.4 Zero Trust Security & Least-Privilege Secrets Hygiene** (`backend/app/security/zero_trust.py`)
   - Implement **Zero Trust Short-Lived Service JWTs** (`iss`, `sub`, `aud`, `roles`, `exp <= 300s`, `jti` replay cache) validated via `X-Service-Token` across internal service & A2A peer boundaries.
   - Add a **Least-Privilege Secrets Provider** abstraction (env + HashiCorp Vault/KMS adapter) with automated secret-leakage redaction in logs, traces, and audit events.
-- [ ] **P4.5 Immutable IaC, Progressive Delivery & Chaos Engineering** (`deploy/`, `backend/app/resilience/chaos.py`)
+- [x] **P4.5 Immutable IaC, Progressive Delivery & Chaos Engineering** (`deploy/`, `backend/app/resilience/chaos.py`)
   - Add **Immutable Infrastructure & IaC** manifests (`deploy/k8s/` Deployments, Services, HPA, NetworkPolicies, PDBs + `deploy/terraform/` skeleton).
   - Implement **Progressive Delivery** via a runtime `FeatureFlagManager` (`GET/POST /ops/feature-flags`) supporting deterministic percentage **Canary** rollouts (`1%–100%`) and **Blue-Green** release track tagging (`X-Release-Track`).
   - Implement a gated **Chaos Engineering Fault Injector** (`POST /ops/chaos`) to inject controlled latency spikes or downstream faults (`ollama`, `duckduckgo`, `milvus`) and verify Circuit Breakers, Bulkheads, and Graceful Degradation in automated tests & live demos.

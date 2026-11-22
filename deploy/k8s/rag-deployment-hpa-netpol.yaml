@@ -1,0 +1,147 @@
+# P4.5 Immutable Infrastructure as Code — Kubernetes Deployment, Service, HPA, NetworkPolicy & PDB
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-gateway-api
+  namespace: rag-prod
+  labels:
+    app: rag-gateway-api
+    release-track: blue
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: rag-gateway-api
+  template:
+    metadata:
+      labels:
+        app: rag-gateway-api
+        release-track: blue
+    spec:
+      serviceAccountName: rag-gateway-sa
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: rag-gateway
+          image: ghcr.io/staff-rag/rag-gateway:1.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000001
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"
+          readinessProbe:
+            httpGet:
+              path: /health/resilience
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          volumeMounts:
+            - name: tmp-ephemeral
+              mountPath: /tmp
+      volumes:
+        - name: tmp-ephemeral
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-gateway-api
+  namespace: rag-prod
+spec:
+  selector:
+    app: rag-gateway-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rag-gateway-api-hpa
+  namespace: rag-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: rag-gateway-api
+  minReplicas: 3
+  maxReplicas: 12
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 65
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rag-gateway-api-pdb
+  namespace: rag-prod
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: rag-gateway-api
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rag-gateway-zero-trust-netpol
+  namespace: rag-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: rag-gateway-api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: rag-frontend-ui
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              tier: data-plane
+      ports:
+        - protocol: TCP
+          port: 19530
+        - protocol: TCP
+          port: 5672
+        - protocol: TCP
+          port: 11434

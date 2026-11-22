@@ -13,6 +13,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from app.resilience.progressive_delivery import feature_flags
+
 
 class GatewayRateLimiter:
     """Sliding-window per-client/tenant rate limiter returning (allowed, retry_after_sec)."""
@@ -75,6 +77,7 @@ class APIGatewayMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers["X-Request-Id"] = req_id
         response.headers["X-Gateway-Service"] = "staff-rag-gateway"
+        response.headers["X-Release-Track"] = feature_flags.active_release_track
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         return response
