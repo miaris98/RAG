@@ -10,7 +10,7 @@ An interview-ready, production-grade **Retrieval-Augmented Generation (RAG)** mi
 
 ## 🎯 60-Second Interview Elevator Pitch
 
-> *"Instead of a naive dense-only prototype, I built a modular, 100% local **Production RAG Platform** with **Pre-Filtered Multi-Tenant RBAC**, **Table-, Fenced-Code & AST-Symbol-Aware Parent-Child Chunking** with SHA-256 deduplication, **Anthropic Contextual Enrichment**, **Shopify/Notion CDC Incremental Upserts**, and a **Tri-Modal Hybrid Retrieval Engine** (Milvus Dense + BM25 + 1-hop Entity Knowledge Graph fused via **Reciprocal Rank Fusion** with **Freshness Time-Decay & Version Precedence**, followed by **Cross-Encoder Reranking**, **MMR Diversity**, and **Lost-in-the-Middle** U-shaped reordering). Orchestration runs on a **cyclic LangGraph StateGraph** implementing **Adaptive Query Routing**, **Corrective RAG (CRAG)** gating, **Self-RAG** faithfulness verification with **structured `[Doc i]` inline citations**, and **DoorDash Inverted RAG / Ramp Rule-Grounded Structured JSON Classification**. The system includes **PII & Prompt Injection Guardrails**, **GDPR Article 17 surgical erasure**, a **tamper-evident SHA-256 hash-chained audit ledger**, **Zendesk-style user feedback telemetry**, **hierarchical distributed span waterfalls**, **Prometheus/Grafana**, **P2.1 LLM-as-a-Judge & Human Calibration**, **Perplexity Late Chunking**, **NVIDIA PDF Table Extraction**, **Spotify Semantic IDs**, **Airbnb Tenant Shard Routing**, **LinkedIn Shared-Prefix KV Caching**, **Instacart Cache Pre-Warming**, **Agoda OpsBot Read-Only SQL Live Inventory**, **Parallel Specialist Subagents (`POST /agent/orchestrate`)**, **Google A2A Protocol (`/.well-known/agent.json`, `POST /a2a`) with Anti-Confused-Deputy RBAC**, and an automated **62-test TDD & 5-mode IR Ablation suite**."*
+> *"Instead of a naive dense-only prototype, I built a modular, 100% local **Production RAG Platform** with **Pre-Filtered Multi-Tenant RBAC**, **Table-, Fenced-Code & AST-Symbol-Aware Parent-Child Chunking** with SHA-256 deduplication, **Anthropic Contextual Enrichment**, **Shopify/Notion CDC Incremental Upserts**, and a **Tri-Modal Hybrid Retrieval Engine** (Milvus Dense + BM25 + 1-hop Entity Knowledge Graph fused via **Reciprocal Rank Fusion** with **Freshness Time-Decay & Version Precedence**, followed by **Cross-Encoder Reranking**, **MMR Diversity**, and **Lost-in-the-Middle** U-shaped reordering). Orchestration runs on a **cyclic LangGraph StateGraph** implementing **Adaptive Query Routing**, **Corrective RAG (CRAG)** gating, **Self-RAG** faithfulness verification with **structured `[Doc i]` inline citations**, and **DoorDash Inverted RAG / Ramp Rule-Grounded Structured JSON Classification**. The system includes **PII & Prompt Injection Guardrails**, **GDPR Article 17 surgical erasure**, a **tamper-evident SHA-256 hash-chained audit ledger**, **Zendesk-style user feedback telemetry**, **hierarchical distributed span waterfalls**, **Prometheus/Grafana**, **P2.1 LLM-as-a-Judge & Human Calibration**, **Perplexity Late Chunking**, **NVIDIA PDF Table Extraction**, **Spotify Semantic IDs**, **Airbnb Tenant Shard Routing**, **LinkedIn Shared-Prefix KV Caching**, **Instacart Cache Pre-Warming**, **Agoda OpsBot Read-Only SQL Live Inventory**, **Parallel Specialist Subagents (`POST /agent/orchestrate`)**, **Google A2A Protocol (`/.well-known/agent.json`, `POST /a2a`) with Anti-Confused-Deputy RBAC**, **Resilient Microservices Patterns** (Retries+Jitter, Bulkheads, Graceful Degradation L0–L3, Dynamic Service Discovery, API Gateway Rate Limiting, Istio mTLS Mesh, Saga Compensating Rollbacks, CQRS Read Projections, Zero Trust Short-Lived Service JWTs, Immutable K8s/Terraform IaC, Canary/Blue-Green Feature Flags & Gated Chaos Engineering), and an automated **77-test TDD & 5-mode IR Ablation suite**."*
 
 ```mermaid
 flowchart LR
@@ -38,6 +38,11 @@ flowchart LR
 | **Live SQL OpsBot Inventory** | [http://127.0.0.1:8000/inventory/sql-status](http://127.0.0.1:8000/inventory/sql-status) | [http://localhost:8000/inventory/sql-status](http://localhost:8000/inventory/sql-status) | Agoda read-only SQLite service/incident DB (`POST /inventory/sql-query`) |
 | **Specialist Subagents** | [http://127.0.0.1:8000/agent/subagents](http://127.0.0.1:8000/agent/subagents) | [http://localhost:8000/agent/subagents](http://localhost:8000/agent/subagents) | Registered least-privilege specialists (`POST /agent/orchestrate`) |
 | **Google A2A Agent Card** | [http://127.0.0.1:8000/.well-known/agent.json](http://127.0.0.1:8000/.well-known/agent.json) | [http://localhost:8000/.well-known/agent.json](http://localhost:8000/.well-known/agent.json) | A2A discovery card + JSON-RPC 2.0 / SSE server (`POST /a2a`) |
+| **Resilience & Bulkheads** | [http://127.0.0.1:8000/health/resilience](http://127.0.0.1:8000/health/resilience) | [http://localhost:8000/health/resilience](http://localhost:8000/health/resilience) | Graceful Degradation Tier (`L0`–`L3`), Bulkheads & Retry telemetry |
+| **Service Discovery** | [http://127.0.0.1:8000/discovery/services](http://127.0.0.1:8000/discovery/services) | [http://localhost:8000/discovery/services](http://localhost:8000/discovery/services) | Dynamic Service Registry (`POST /discovery/register`, TTL heartbeats) |
+| **CQRS & Saga Boundaries** | [http://127.0.0.1:8000/cqrs/read-model](http://127.0.0.1:8000/cqrs/read-model) | [http://localhost:8000/cqrs/read-model](http://localhost:8000/cqrs/read-model) | Lock-free CQRS projection, `POST /saga/ingest`, `GET /data/boundaries` |
+| **Zero Trust Service JWTs** | [http://127.0.0.1:8000/security/token](http://127.0.0.1:8000/security/token) | [http://localhost:8000/security/token](http://localhost:8000/security/token) | Short-lived HS256 JWT issuance (`POST /security/verify`, `jti` replay cache) |
+| **Canary Flags & Chaos Ops** | [http://127.0.0.1:8000/ops/feature-flags](http://127.0.0.1:8000/ops/feature-flags) | [http://localhost:8000/ops/feature-flags](http://localhost:8000/ops/feature-flags) | Canary `%` rollouts, `X-Release-Track` Blue-Green & `GET/POST /ops/chaos` |
 | **Distributed Traces JSON** | [http://127.0.0.1:8000/traces](http://127.0.0.1:8000/traces) | [http://localhost:8000/traces](http://localhost:8000/traces) | Langfuse-compatible parent-child spans & waterfall timings |
 | **Compliance Audit Dossier** | [http://127.0.0.1:8000/compliance/audit-report](http://127.0.0.1:8000/compliance/audit-report) | [http://localhost:8000/compliance/audit-report](http://localhost:8000/compliance/audit-report) | Full JSON + Markdown system audit report |
 | **SHA-256 Audit Ledger** | [http://127.0.0.1:8000/audit-logs](http://127.0.0.1:8000/audit-logs) | [http://localhost:8000/audit-logs](http://localhost:8000/audit-logs) | Tamper-evident hash-chained event history (`chain_valid: true`) |
@@ -111,7 +116,7 @@ Open **[http://127.0.0.1:7860](http://127.0.0.1:7860)** and walk the interviewer
 
 ---
 
-## 🧪 Step 3: Run Automated Tests (`62` TDD, Security, Subagents, A2A, Judge, CDC & GDPR Tests)
+## 🧪 Step 3: Run Automated Tests (`77` TDD, Microservices, Security, Subagents, A2A, Judge, CDC & GDPR Tests)
 
 ```powershell
 cd C:\Users\miari\Desktop\RAG
@@ -131,10 +136,18 @@ RAG/
 ├── observability/
 │   ├── prometheus.yml             # Scrapes fastapi-backend:8000/metrics/prometheus every 5s
 │   └── grafana/                   # Pre-provisioned Prometheus datasource & RAG dashboard
+├── deploy/
+│   ├── mesh/                      # Istio STRICT mTLS PeerAuthentication & DestinationRule retry/outlier manifests
+│   ├── k8s/                       # Immutable K8s Deployment, Service, HPA, NetworkPolicy & PDB manifests
+│   └── terraform/                 # Immutable Terraform cluster & release-track IaC skeleton
 ├── backend/
 │   ├── app/
 │   │   ├── config.py              # Environment-backed settings
-│   │   ├── models.py              # Pydantic contracts (RBAC, CitationItem, PipelineTrace, Eval)
+│   │   ├── models.py              # Pydantic contracts (RBAC, CitationItem, PipelineTrace, Eval, P4 Microservices)
+│   │   ├── data/                  # P4.3 Saga Pattern compensating rollbacks, CQRS read model & DB-per-Service boundaries
+│   │   ├── gateway/               # P4.2 Dynamic Service Discovery Registry & API Gateway rate-limit/security middleware
+│   │   ├── resilience/            # P4.1/P4.5 Retries+Jitter, Bulkheads, Degradation L0-L3, Canary Flags & Chaos Controller
+│   │   ├── security/              # P4.4 Zero Trust short-lived HS256 JWTs (`jti` replay cache) & Least-Privilege Secrets
 │   │   ├── ingestion/             # Table/Code/AST-aware Parent-Child chunking, Contextual Enrichment & CDC upserts
 │   │   ├── retrieval/             # Singleton models, Entity Graph, Hybrid RRF + Freshness Decay, Reranker, MMR, Cache
 │   │   ├── a2a/                   # Google A2A Protocol Agent Card + JSON-RPC 2.0 / SSE + Anti-Confused-Deputy RBAC
@@ -144,10 +157,10 @@ RAG/
 │   │   ├── observability/         # Langfuse-compatible TraceCollector + Prometheus + Circuit Breakers + FeedbackStore
 │   │   ├── evaluation/            # HitRate@K, MRR@K, NDCG@K, 5-Mode Ablation & P2.1 LLM-as-a-Judge (`judge.py`)
 │   │   └── worker/                # RabbitMQ async query & ingestion workers with thread fallback
-│   ├── mcp_server.py              # RBAC-scoped MCP server (retrieve, ingest, GDPR erase)
+│   ├── mcp_server.py              # RBAC-scoped MCP server (5 tools: retrieve, ingest, GDPR erase, SQL, taxonomy)
 │   ├── main.py                    # FastAPI gateway
 │   ├── debug.py                   # CLI diagnostic & ablation inspector
-│   └── tests/                     # 62 automated TDD unit, integration, subagents, A2A, judge, CDC, PDF, SQL, GDPR & OWASP tests
+│   └── tests/                     # 77 automated TDD unit, integration, microservices, subagents, A2A, judge, CDC, PDF, SQL, GDPR & OWASP tests
 ├── frontend/
 │   └── app.py                     # 4-Tab Gradio Observability, Eval & Compliance Audit Studio
 ├── docs/

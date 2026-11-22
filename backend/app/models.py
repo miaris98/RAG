@@ -370,3 +370,23 @@ class ServiceTokenRequest(BaseModel):
     audience: str = Field(default="rag-gateway-api", min_length=1, max_length=100)
     roles: List[str] = Field(default_factory=lambda: ["public"])
     ttl_sec: float = Field(default=120.0, gt=0.0, le=300.0)
+
+
+class FeatureFlagUpdateRequest(BaseModel):
+    """P4.5 Progressive Delivery Canary percentage & Blue-Green release track update payload."""
+
+    flag_name: str = Field(..., min_length=1, max_length=100)
+    enabled: bool = Field(default=True)
+    rollout_percentage: int = Field(default=100, ge=0, le=100)
+    description: Optional[str] = Field(default=None, max_length=300)
+    active_release_track: Optional[str] = Field(default=None, max_length=20)
+
+
+class ChaosConfigRequest(BaseModel):
+    """P4.5 Gated Chaos Engineering fault injection configuration."""
+
+    enabled: bool = Field(default=False)
+    target: str = Field(default="ollama", min_length=1, max_length=50)
+    mode: str = Field(default="failure", min_length=1, max_length=20)
+    failure_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    latency_ms: int = Field(default=0, ge=0, le=10000)

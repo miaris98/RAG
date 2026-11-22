@@ -26,8 +26,10 @@ from app.guardrails.audit import audit_logger
 from app.ingestion.pipeline import ingestion_pipeline
 from app.models import (
     CDCEventRequest,
+    ChaosConfigRequest,
     DocumentInput,
     EvaluationRequest,
+    FeatureFlagUpdateRequest,
     OrchestrateRequest,
     OrchestrateResponse,
     PrewarmCacheRequest,
@@ -43,7 +45,13 @@ from app.models import (
 from app.observability.feedback import feedback_store
 from app.observability.metrics import metrics_collector
 from app.observability.tracing import trace_collector
-from app.resilience.patterns import bulkhead_registry, evaluate_degradation_level, retry_telemetry
+from app.resilience import (
+    bulkhead_registry,
+    chaos_controller,
+    evaluate_degradation_level,
+    feature_flags,
+    retry_telemetry,
+)
 from app.security import ZeroTrustError, secrets_provider, zero_trust_auth
 from app.retrieval.embeddings import ModelRegistry
 from app.retrieval.hybrid import retrieval_engine
@@ -614,6 +622,59 @@ async def verify_zero_trust_service_token(request: Request):
         return {"valid": True, "claims": claims}
     except ZeroTrustError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+@app.get("/ops/feature-flags")
+async def get_progressive_delivery_feature_flags(subject_key: str = "default"):
+    """P4.5 Returns Canary percentage feature flags, evaluations for subject_key, and active Blue-Green track."""
+    return feature_flags.snapshot(subject_key=subject_key)
+
+
+@app.post("/ops/feature-flags")
+async def update_progressive_delivery_feature_flag(req: FeatureFlagUpdateRequest):
+    """P4.5 Updates a Canary percentage feature flag and optionally switches the Blue-Green release track."""
+    try:
+        feature_flags.set_flag(
+            flag_name=req.flag_name,
+            enabled=req.enabled,
+            rollout_percentage=req.rollout_percentage,
+            description=req.description,
+        )
+        if req.active_release_track is not None:
+            feature_flags.set_release_track(req.active_release_track)
+        audit_logger.log_event(
+            event_type="progressive_delivery_updated",
+            summary=f"Flag '{req.flag_name}' enabled={req.enabled} rollout={req.rollout_percentage}% track={feature_flags.active_release_track}",
+        )
+        return feature_flags.snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/ops/chaos")
+async def get_chaos_controller_status():
+    """P4.5 Returns gated Chaos Engineering fault-injection status and counters."""
+    return chaos_controller.snapshot()
+
+
+@app.post("/ops/chaos")
+async def configure_chaos_fault_injector(req: ChaosConfigRequest):
+    """P4.5 Configures controlled latency or synthetic failure injection for resilience verification."""
+    try:
+        state = chaos_controller.configure(
+            enabled=req.enabled,
+            target=req.target,
+            mode=req.mode,
+            failure_rate=req.failure_rate,
+            latency_ms=req.latency_ms,
+        )
+        audit_logger.log_event(
+            event_type="chaos_config_updated",
+            summary=f"Chaos enabled={req.enabled} target={req.target} mode={req.mode} rate={req.failure_rate} lat={req.latency_ms}ms",
+        )
+        return state
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/evaluate")
