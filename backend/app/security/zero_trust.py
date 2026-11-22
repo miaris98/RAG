@@ -133,6 +133,17 @@ class SecretsProvider:
         self._static = dict(static_secrets or {})
         self._allowlist = dict(service_allowlist or self.DEFAULT_ALLOWLIST)
 
+    def register_secret(
+        self,
+        secret_name: str,
+        value: str,
+        allowed_services: Optional[Set[str]] = None,
+    ) -> None:
+        """Registers a managed runtime secret and optional per-service allow-list entries."""
+        self._static[secret_name] = value
+        for svc in allowed_services or set():
+            self._allowlist.setdefault(svc, set()).add(secret_name)
+
     def get_secret(self, service_name: str, secret_name: str) -> str:
         allowed_keys = self._allowlist.get(service_name, set())
         if secret_name not in allowed_keys:

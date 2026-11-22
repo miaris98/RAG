@@ -7,6 +7,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from app.guardrails.security import guardrails
+from app.security.zero_trust import secrets_provider
 
 
 class TamperEvidentAuditLogger:
@@ -28,8 +29,9 @@ class TamperEvidentAuditLogger:
         summary: str = "",
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Records a PII-sanitized audit event chained to the previous event's SHA-256 digest."""
+        """Records a PII-sanitized and secret-redacted audit event chained to the previous event's SHA-256 digest."""
         clean_summary, _ = guardrails.sanitize_text(summary, redact_pii=True, block_injections=True)
+        clean_summary = secrets_provider.redact_secrets(clean_summary)
         with self._lock:
             seq = len(self._events) + 1
             record_body = {

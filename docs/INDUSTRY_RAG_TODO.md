@@ -157,3 +157,8 @@
   - Add **Immutable Infrastructure & IaC** manifests (`deploy/k8s/` Deployments, Services, HPA, NetworkPolicies, PDBs + `deploy/terraform/` skeleton).
   - Implement **Progressive Delivery** via a runtime `FeatureFlagManager` (`GET/POST /ops/feature-flags`) supporting deterministic percentage **Canary** rollouts (`1%–100%`) and **Blue-Green** release track tagging (`X-Release-Track`).
   - Implement a gated **Chaos Engineering Fault Injector** (`POST /ops/chaos`) to inject controlled latency spikes or downstream faults (`ollama`, `duckduckgo`, `milvus`) and verify Circuit Breakers, Bulkheads, and Graceful Degradation in automated tests & live demos.
+- [x] **P4.6 End-to-End Microservices Runtime Wiring & Ops UI Parity** (`nodes.py`, `hybrid.py`, `audit.py`, `main.py`, `frontend/app.py`)
+  - Wire `bulkhead_registry`, `retry_with_backoff`, and `chaos_controller.maybe_inject` directly into live Ollama, DuckDuckGo, and Dense/Milvus execution paths.
+  - Enforce Zero Trust `X-Service-Token` JWT + `jti` replay validation on `POST /a2a` whenever supplied by peer agents.
+  - Automatically scrub managed secrets via `secrets_provider.redact_secrets()` inside `TamperEvidentAuditLogger.log_event()`.
+  - Surface live Resilience, Service Discovery, CQRS, Canary Feature Flags, and Chaos Engineering controls inside Gradio Tab 4.

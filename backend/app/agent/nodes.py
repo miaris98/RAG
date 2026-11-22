@@ -10,6 +10,7 @@ from app.guardrails.security import guardrails
 from app.memory.conversation import conversation_memory
 from app.models import RetrievedChunk
 from app.observability.metrics import llm_circuit_breaker, web_circuit_breaker
+from app.resilience import bulkhead_registry, chaos_controller, retry_with_backoff
 from app.retrieval.embeddings import ModelRegistry
 from app.retrieval.hybrid import retrieval_engine
 from app.retrieval.postprocessor import context_postprocessor
@@ -203,11 +204,20 @@ def external_web_search(state: RAGGraphState) -> Dict[str, Any]:
             try:
                 from langchain_community.tools import DuckDuckGoSearchRun
 
-                search = DuckDuckGoSearchRun()
-                web_text = str(search.invoke(query)).strip()
-                web_circuit_breaker.record_success()
+                def _run_ddg() -> str:
+                    with bulkhead_registry.get("web_search").slot(timeout_sec=0.2):
+                        chaos_controller.maybe_inject("duckduckgo")
+                        search = DuckDuckGoSearchRun()
+                        return str(search.invoke(query)).strip()
+
+                web_text = retry_with_backoff(
+                    _run_ddg,
+                    max_attempts=2,
+                    base_delay_sec=0.01,
+                    jitter_ratio=0.1,
+                    circuit_breaker=web_circuit_breaker,
+                )
             except Exception as exc:
-                web_circuit_breaker.record_failure()
                 web_text = f"External web search unavailable ({exc})."
     else:
         web_text = "External web search disabled by request configuration."
@@ -370,14 +380,23 @@ def synthesize_cited_answer(state: RAGGraphState) -> Dict[str, Any]:
         draft = _build_extractive_fallback_answer(query, relevant_chunks, web_results)
     else:
         try:
-            llm = ModelRegistry.get_llm()
-            response = llm.invoke(prompt)
-            draft = str(response.content).strip()
-            llm_circuit_breaker.record_success()
+            def _invoke_llm() -> str:
+                with bulkhead_registry.get("ollama_llm").slot(timeout_sec=0.2):
+                    chaos_controller.maybe_inject("ollama")
+                    llm = ModelRegistry.get_llm()
+                    response = llm.invoke(prompt)
+                    return str(response.content).strip()
+
+            draft = retry_with_backoff(
+                _invoke_llm,
+                max_attempts=2,
+                base_delay_sec=0.01,
+                jitter_ratio=0.1,
+                circuit_breaker=llm_circuit_breaker,
+            )
             if not draft:
                 draft = _build_extractive_fallback_answer(query, relevant_chunks, web_results)
         except Exception as exc:
-            llm_circuit_breaker.record_failure()
             print(f"[synthesize_cited_answer] LLM call failed, using deterministic grounded synthesis: {exc}")
             draft = _build_extractive_fallback_answer(query, relevant_chunks, web_results)
 

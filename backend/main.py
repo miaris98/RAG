@@ -559,7 +559,20 @@ async def get_a2a_agent_card(request: Request):
 
 @app.post("/a2a")
 async def handle_a2a_jsonrpc_endpoint(request: Request):
-    """P3.4 Google A2A JSON-RPC 2.0 endpoint (tasks/send, tasks/get, tasks/cancel, tasks/sendSubscribe SSE)."""
+    """P3.4/P4.6 Google A2A JSON-RPC 2.0 endpoint with Zero Trust X-Service-Token verification when supplied."""
+    svc_token = request.headers.get("X-Service-Token", "").strip()
+    if svc_token:
+        if svc_token.lower().startswith("bearer "):
+            svc_token = svc_token[7:].strip()
+        try:
+            zero_trust_auth.verify_token(
+                svc_token,
+                expected_audience="rag-gateway-api",
+                prevent_replay=True,
+            )
+        except ZeroTrustError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+
     payload = await request.json()
     peer_agent_id = request.headers.get("X-Peer-Agent-Id")
     if payload.get("method") == "tasks/sendSubscribe":
