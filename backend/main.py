@@ -19,6 +19,7 @@ from app.agent.sql_tool import sql_inventory_tool
 from app.agent.structured import execute_structured_taxonomy_query
 from app.agent.subagents import supervisor_orchestrator
 from app.config import settings
+from app.data import DATABASE_PER_SERVICE_BOUNDARIES, cqrs_read_model, execute_ingestion_saga
 from app.evaluation.benchmark import run_ablation_benchmark
 from app.gateway import APIGatewayMiddleware, gateway_rate_limiter, service_registry
 from app.guardrails.audit import audit_logger
@@ -558,6 +559,26 @@ async def handle_a2a_jsonrpc_endpoint(request: Request):
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
     return a2a_manager.handle_jsonrpc(payload, peer_agent_id=peer_agent_id)
+
+
+@app.post("/saga/ingest")
+async def ingest_document_via_saga(doc: DocumentInput, inject_failure_step: str = ""):
+    """P4.3 Saga Pattern ingestion executing automatic reverse compensating rollbacks on failure."""
+    if not doc.content or not doc.content.strip():
+        raise HTTPException(status_code=400, detail="Document content cannot be empty.")
+    return execute_ingestion_saga(doc, inject_failure_step=inject_failure_step or None)
+
+
+@app.get("/cqrs/read-model")
+async def get_cqrs_read_projection():
+    """P4.3 Lock-free CQRS materialized read projection decoupled from write-path stores."""
+    return cqrs_read_model.snapshot()
+
+
+@app.get("/data/boundaries")
+async def get_database_per_service_boundaries():
+    """P4.3 Database-per-Service ownership boundaries preventing cross-service DB coupling."""
+    return {"count": len(DATABASE_PER_SERVICE_BOUNDARIES), "boundaries": DATABASE_PER_SERVICE_BOUNDARIES}
 
 
 @app.post("/evaluate")

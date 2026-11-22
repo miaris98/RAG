@@ -3,6 +3,7 @@
 import time
 from typing import Dict, List
 
+from app.data.cqrs import cqrs_read_model
 from app.guardrails.audit import audit_logger
 from app.guardrails.security import guardrails
 from app.ingestion.chunking import ChunkingEngine
@@ -95,6 +96,15 @@ class IngestionPipeline:
             document_context_text=content_to_index if doc_input.enable_late_chunking else None,
         )
         doc_id = chunks[0].doc_id if chunks else None
+        if doc_id:
+            cqrs_read_model.project_document_upserted(
+                doc_id=doc_id,
+                title=doc_input.title,
+                source=doc_input.source,
+                tenant_id=doc_input.tenant_id,
+                access_roles=doc_input.access_roles,
+                chunk_count=len(chunks),
+            )
         invalidated_cache_entries = semantic_cache.invalidate_by_doc_id(doc_id) if doc_id else 0
         elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
         parent_ids = {c.parent_id for c in chunks}
@@ -192,6 +202,7 @@ class IngestionPipeline:
         for old_id in superseded_doc_ids:
             deleted_chunks += retrieval_engine.delete_by_doc_id(old_id)
             invalidated_cache += semantic_cache.invalidate_by_doc_id(old_id)
+            cqrs_read_model.remove_document(old_id)
 
         if event.action == "delete":
             audit_logger.log_event(
