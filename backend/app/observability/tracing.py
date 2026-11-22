@@ -292,6 +292,94 @@ class TraceCollector:
 
         return trace_id
 
+    def record_multi_agent_trace(
+        self,
+        query: str,
+        answer_preview: str,
+        tenant_id: str,
+        user_roles: List[str],
+        retrieval_mode: str,
+        subagent_spans: List[Dict[str, Any]],
+        faithfulness_score: float,
+        citation_count: int,
+        guardrail_flags: List[str],
+        total_latency_ms: float,
+    ) -> tuple[str, str]:
+        """Records a hierarchical Supervisor + Specialist Subagents distributed trace."""
+        trace_id = f"tr_{uuid.uuid4().hex[:16]}"
+        root_span_id = str(uuid.uuid4())[:12]
+        clean_query, _ = guardrails.sanitize_text(query)
+        clean_answer, _ = guardrails.sanitize_text(answer_preview[:280])
+
+        spans: List[Dict[str, Any]] = [
+            {
+                "span_id": root_span_id,
+                "parent_span_id": None,
+                "depth": 0,
+                "name": "supervisor_orchestrator",
+                "start_offset_ms": 0.0,
+                "duration_ms": round(total_latency_ms, 2),
+                "status": "OK",
+                "attributes": {
+                    "subagents": len(subagent_spans),
+                    "roles": ",".join(user_roles),
+                },
+            }
+        ]
+        offset = 0.0
+        for sp in subagent_spans:
+            dur = float(sp.get("duration_ms", 0.0))
+            spans.append(
+                {
+                    "span_id": str(uuid.uuid4())[:12],
+                    "parent_span_id": root_span_id,
+                    "depth": 1,
+                    "name": sp["name"],
+                    "start_offset_ms": round(offset, 2),
+                    "duration_ms": round(dur, 2),
+                    "status": "OK",
+                    "attributes": dict(sp.get("attributes") or {}),
+                }
+            )
+            offset += dur
+
+        waterfall_md = _render_waterfall_markdown(spans, total_latency_ms)
+        record: Dict[str, Any] = {
+            "trace_id": trace_id,
+            "timestamp": round(time.time(), 3),
+            "name": "supervisor_orchestrator",
+            "query": clean_query,
+            "answer_preview": clean_answer,
+            "tenant_id": tenant_id,
+            "user_roles": list(user_roles),
+            "retrieval_mode": retrieval_mode,
+            "query_route": "multi_agent_supervisor",
+            "cache_hit": False,
+            "crag_decision": "multi_agent",
+            "self_rag_verdict": "audited",
+            "faithfulness_score": float(faithfulness_score),
+            "citation_count": int(citation_count),
+            "guardrail_flags": list(guardrail_flags),
+            "retrieved_chunk_ids": [],
+            "retrieved_doc_ids": [],
+            "retrieval_funnel": {},
+            "citations": [],
+            "total_latency_ms": round(total_latency_ms, 2),
+            "spans": spans,
+            "waterfall_markdown": waterfall_md,
+            "langfuse_status": "local_trace_store",
+        }
+        record["langfuse_status"] = self._forward_to_langfuse(record)
+
+        with self._lock:
+            if len(self._traces) >= (self._traces.maxlen or 500):
+                oldest = self._traces.popleft()
+                self._by_id.pop(oldest["trace_id"], None)
+            self._traces.append(record)
+            self._by_id[trace_id] = record
+
+        return trace_id, waterfall_md
+
     def list_traces(self, limit: int = 50) -> Dict[str, Any]:
         with self._lock:
             recent = list(reversed(list(self._traces)[-limit:]))

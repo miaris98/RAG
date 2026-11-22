@@ -632,6 +632,55 @@ def submit_feedback_to_backend(
         return f"❌ Feedback error: `{exc}`"
 
 
+def run_multi_agent_supervisor_ui(
+    query: str,
+    retrieval_mode: str,
+    top_k: int,
+    tenant_id: str,
+    user_roles: List[str],
+    enable_web: bool,
+) -> Tuple[str, str]:
+    """Calls POST /agent/orchestrate and formats multi-agent synthesis + subagent waterfall."""
+    if not query or not query.strip():
+        return "⚠️ Enter a query first.", "_Waiting for multi-agent execution..._"
+    try:
+        resp = requests.post(
+            f"{BACKEND_URL}/agent/orchestrate",
+            json={
+                "query": query.strip(),
+                "tenant_id": tenant_id or "default",
+                "user_roles": user_roles or ["public"],
+                "retrieval_mode": retrieval_mode,
+                "top_k": int(top_k),
+                "enable_web_search": bool(enable_web),
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        d = resp.json()
+    except Exception as exc:
+        return f"❌ Multi-Agent Orchestration Error: `{exc}`", "_Failed_"
+
+    sub_lines = [
+        f"### 🤖 Specialist Subagents Executed (`trace_id={d.get('trace_id')}` | `{d.get('total_latency_ms')} ms`)",
+        "| Subagent | Status | Latency | Tools Used | Summary |",
+        "| :--- | :---: | :---: | :--- | :--- |",
+    ]
+    for sr in d.get("subagent_results") or []:
+        tools_str = ", ".join(f"`{t}`" for t in sr.get("tools_used", []))
+        sub_lines.append(
+            f"| `{sr['agent_id']}` | `{sr['status']}` | `{sr['latency_ms']} ms` | {tools_str} | {sr['summary']} |"
+        )
+    sub_lines.extend(
+        [
+            "",
+            "#### ⏱️ Supervisor Hierarchical Span Waterfall",
+            d.get("waterfall_markdown", "_No waterfall_"),
+        ]
+    )
+    return d.get("final_answer", ""), "\n".join(sub_lines)
+
+
 def run_structured_taxonomy_query_ui(
     query: str,
     labels_csv: str,
@@ -770,6 +819,7 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
 
                     with gr.Row():
                         stream_btn = gr.Button("⚡ Stream Live (SSE)", variant="primary")
+                        multi_agent_btn = gr.Button("🤖 Run Multi-Agent Subagents")
                         submit_btn = gr.Button("📤 Queue via RabbitMQ")
                     job_id_state = gr.State()
                     submission_out = gr.Markdown(value="_No active job submitted._")
@@ -892,6 +942,11 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
             q_input, retrieval_mode, top_k_slider, query_tenant, query_roles,
             enable_expansion_chk, enable_web_chk, enable_self_rag_chk, enable_cache_chk, enable_guardrails_chk,
         ],
+        outputs=[final_output, trace_output],
+    )
+    multi_agent_btn.click(
+        run_multi_agent_supervisor_ui,
+        inputs=[q_input, retrieval_mode, top_k_slider, query_tenant, query_roles, enable_web_chk],
         outputs=[final_output, trace_output],
     )
     submit_btn.click(

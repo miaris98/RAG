@@ -127,7 +127,7 @@
   - Add **PDF Upload (`POST /ingest/pdf`)** and **CDC Upsert/Delete (`POST /ingest/cdc`)** controls to Gradio Tab 1.
   - Surface **User Feedback KPIs**, **Airbnb Shards & Spotify Semantic Clusters**, **LinkedIn Prefix Cache Stats + Instacart Pre-Warm button**, and **Agoda OpsBot Read-Only SQL Inspector** in Gradio Tab 4.
   - Expose `query_live_sql_inventory` and `classify_structured_taxonomy` in `backend/mcp_server.py`, and chart `rag_user_feedback_total`, `rag_user_satisfaction_rate`, `rag_prefix_cache_hits_total`, and `rag_prefix_cache_amortized_tokens_total` in Grafana.
-- [ ] **P3.3 Specialist Subagents & Parallel Supervisor Orchestration** (`backend/app/agent/subagents.py`, `POST /agent/orchestrate`)
+- [x] **P3.3 Specialist Subagents & Parallel Supervisor Orchestration** (`backend/app/agent/subagents.py`, `POST /agent/orchestrate`)
   - *Inspired by:* **Anthropic Multi-Agent Research**, **Uber (Genie)**, **LangGraph Supervisor**
   - Implement a **Supervisor Agent** that decomposes complex queries and delegates in parallel to isolated, least-privilege **Specialist Subagents**: `retrieval_specialist` (Tri-Modal Hybrid RAG), `sql_ops_specialist` (read-only live SQL inventory/incidents), `compliance_auditor` (guardrails + structured policy rules + P2.1 hallucination judge), and `web_researcher` (circuit-breaker external search).
   - Emit per-subagent child spans into `TraceCollector` for waterfall visualization and expose multi-agent delegation telemetry in Gradio Tab 2.

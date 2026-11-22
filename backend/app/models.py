@@ -310,3 +310,42 @@ class SQLQueryRequest(BaseModel):
     """#25 Agoda OpsBot read-only SQL query payload."""
 
     sql: str = Field(..., min_length=6, max_length=1000, description="Read-only SELECT SQL query.")
+
+
+class OrchestrateRequest(BaseModel):
+    """P3.3 Multi-Agent Supervisor request dispatching parallel Specialist Subagents."""
+
+    query: str = Field(..., min_length=1, max_length=2000)
+    tenant_id: str = Field(default="default")
+    user_roles: List[str] = Field(default_factory=lambda: ["public", "engineering", "compliance"])
+    retrieval_mode: RetrievalMode = Field(default="hybrid_graph_rerank")
+    top_k: int = Field(default=5, ge=1, le=20)
+    enable_web_search: bool = Field(default=False)
+    force_all_subagents: bool = Field(default=False)
+    allowed_labels: Optional[List[str]] = Field(default=None)
+
+
+class SubagentResult(BaseModel):
+    """Execution telemetry and output summary from a single least-privilege Specialist Subagent."""
+
+    agent_id: str
+    role: str
+    status: str
+    latency_ms: float
+    tools_used: List[str] = Field(default_factory=list)
+    summary: str
+    output_preview: str = ""
+
+
+class OrchestrateResponse(BaseModel):
+    """Structured multi-agent supervisor synthesis, compliance audit, and trace waterfall."""
+
+    query: str
+    final_answer: str
+    subagent_results: List[SubagentResult] = Field(default_factory=list)
+    citations: List[CitationItem] = Field(default_factory=list)
+    compliance_audit: Dict[str, Any] = Field(default_factory=dict)
+    trace_id: str
+    waterfall_markdown: str
+    total_latency_ms: float
+    audit_event_hash: str
