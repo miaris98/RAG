@@ -123,7 +123,7 @@
 - [x] **P3.1 CI/Docker Dependency Parity & Optional Ollama LLM Contextualizer** (`backend/requirements.txt`, `.github/workflows/edd.yml`, `backend/app/ingestion/chunking.py`)
   - Add `python-multipart` (and `requests` in CI) so `POST /ingest/pdf` boots cleanly in Docker Compose and GitHub Actions EDD runs.
   - Add optional `use_llm_contextualizer` flag in `ChunkingEngine` calling local Ollama (guarded by `CircuitBreaker`) with seamless deterministic extractive fallback.
-- [ ] **P3.2 Full Gradio UI, MCP & Grafana Observability Parity** (`frontend/app.py`, `backend/mcp_server.py`, `observability/grafana/`)
+- [x] **P3.2 Full Gradio UI, MCP & Grafana Observability Parity** (`frontend/app.py`, `backend/mcp_server.py`, `observability/grafana/`)
   - Add **PDF Upload (`POST /ingest/pdf`)** and **CDC Upsert/Delete (`POST /ingest/cdc`)** controls to Gradio Tab 1.
   - Surface **User Feedback KPIs**, **Airbnb Shards & Spotify Semantic Clusters**, **LinkedIn Prefix Cache Stats + Instacart Pre-Warm button**, and **Agoda OpsBot Read-Only SQL Inspector** in Gradio Tab 4.
   - Expose `query_live_sql_inventory` and `classify_structured_taxonomy` in `backend/mcp_server.py`, and chart `rag_user_feedback_total`, `rag_user_satisfaction_rate`, `rag_prefix_cache_hits_total`, and `rag_prefix_cache_amortized_tokens_total` in Grafana.

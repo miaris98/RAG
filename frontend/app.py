@@ -134,6 +134,42 @@ def fetch_compliance_audit_dashboard() -> Tuple[str, str, str, str]:
 
     dossier_md = report.get("markdown_dossier", "_No dossier available._")
 
+    # Append Zendesk Feedback KPIs, Airbnb Shards & Spotify Semantic Clusters, LinkedIn Prefix Cache & Agoda SQL Snapshot
+    fb = report.get("feedback_summary") or {}
+    extra_sections = [
+        "\n### 👍 User Feedback & Satisfaction (Zendesk)",
+        f"- **Thumbs Up:** `{fb.get('thumbs_up', 0)}` | **Thumbs Down:** `{fb.get('thumbs_down', 0)}` | "
+        f"**Satisfaction Rate:** `{fb.get('satisfaction_rate', 1.0) * 100:.1f}%`",
+    ]
+    try:
+        topo = requests.get(f"{BACKEND_URL}/corpus/shards-and-clusters", timeout=8).json()
+        shards_preview = ", ".join(f"`{k}:{v}`" for k, v in list((topo.get("shards") or {}).items())[:8]) or "`none`"
+        clusters_preview = ", ".join(f"`{k}:{v}`" for k, v in list((topo.get("semantic_clusters") or {}).items())[:6]) or "`none`"
+        extra_sections.extend(
+            [
+                "\n### 🗂️ Airbnb Tenant Shards & Spotify Semantic ID Clusters",
+                f"- **Active Shards (`{topo.get('total_shards', 0)}`):** {shards_preview}",
+                f"- **Semantic Clusters (`{topo.get('total_semantic_clusters', 0)}`):** {clusters_preview}",
+            ]
+        )
+    except Exception:
+        pass
+    try:
+        cstats = requests.get(f"{BACKEND_URL}/cache/stats", timeout=8).json()
+        pc = cstats.get("prefix_cache") or {}
+        sc = cstats.get("semantic_cache") or {}
+        extra_sections.extend(
+            [
+                "\n### ⚡ LinkedIn Shared-Prefix KV Cache & Instacart Semantic Cache",
+                f"- **Prefix Cache:** `cached={pc.get('cached_prefixes', 0)}`, `hits={pc.get('prefix_hits', 0)}`, "
+                f"`amortized_tokens={pc.get('amortized_prefix_tokens_total', 0)}`",
+                f"- **Semantic Cache:** `entries={sc.get('size', 0)}`, `hits={sc.get('hits', 0)}`, `misses={sc.get('misses', 0)}`",
+            ]
+        )
+    except Exception:
+        pass
+    dossier_md = dossier_md + "\n" + "\n".join(extra_sections)
+
     # Format Distributed Traces (Langfuse / Span Waterfall)
     traces = report.get("recent_traces") or []
     trace_lines = [
@@ -338,6 +374,111 @@ def ingest_document(
         f"(Duplicates Skipped via SHA-256: `{response.get('chunks_skipped_duplicate')}`)\n"
         f"- **Latency:** `{response.get('ingestion_latency_ms')} ms`"
     )
+
+
+def handle_pdf_upload(
+    pdf_file: Any,
+    title: str,
+    tenant_id: str,
+    roles_selected: List[str],
+    strategy: str,
+    enable_contextual: bool,
+    enable_late_chunking: bool,
+) -> str:
+    """Uploads a PDF file to POST /ingest/pdf (NVIDIA layout & table-aware parser)."""
+    if not pdf_file:
+        return "⚠️ Please select a `.pdf` file to ingest."
+    file_path = pdf_file if isinstance(pdf_file, str) else getattr(pdf_file, "name", "")
+    if not file_path or not os.path.exists(file_path):
+        return "⚠️ Uploaded PDF file path not found."
+    try:
+        with open(file_path, "rb") as fh:
+            resp = requests.post(
+                f"{BACKEND_URL}/ingest/pdf",
+                files={"file": (os.path.basename(file_path), fh, "application/pdf")},
+                data={
+                    "title": title or os.path.basename(file_path),
+                    "tenant_id": tenant_id or "default",
+                    "access_roles": ",".join(roles_selected or ["public"]),
+                    "chunking_strategy": strategy or "parent_child",
+                    "enable_contextual_enrichment": str(bool(enable_contextual)).lower(),
+                    "enable_late_chunking": str(bool(enable_late_chunking)).lower(),
+                },
+                timeout=60,
+            )
+        resp.raise_for_status()
+        d = resp.json()
+        return (
+            f"✅ **PDF Ingested (`{d.get('pdf_parser_backend')}`):** `{d.get('title')}` (`{d.get('doc_id')}`)\n"
+            f"- **Pages Parsed:** `{d.get('pdf_page_count')}` | **Tables Reconstructed:** `{d.get('pdf_tables_detected')}`\n"
+            f"- **New Chunks Indexed:** `{d.get('chunks_indexed_new')}` | **Late Chunking:** `{d.get('late_chunking_enabled')}`"
+        )
+    except Exception as exc:
+        return f"❌ PDF Ingestion Failed: `{exc}`"
+
+
+def handle_cdc_event_ui(
+    external_id: str,
+    action: str,
+    version: int,
+    title: str,
+    content: str,
+    tenant_id: str,
+    roles_selected: List[str],
+) -> str:
+    """Sends a Shopify/Notion-style CDC upsert/delete webhook payload to POST /ingest/cdc."""
+    if not external_id or not external_id.strip():
+        return "⚠️ Provide an `external_id` for the CDC event."
+    try:
+        resp = requests.post(
+            f"{BACKEND_URL}/ingest/cdc",
+            json={
+                "external_id": external_id.strip(),
+                "action": action,
+                "version": int(version or 1),
+                "title": title or f"CDC {external_id}",
+                "content": content or "",
+                "tenant_id": tenant_id or "default",
+                "access_roles": roles_selected or ["public"],
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        d = resp.json()
+        return (
+            f"✅ **CDC `{d.get('action')}` Complete (`{d.get('external_id')}`)**\n"
+            f"- **Superseded Docs:** `{d.get('superseded_doc_ids')}` | **Deleted Chunks:** `{d.get('deleted_chunks', 0)}`\n"
+            f"- **Active Doc ID:** `{d.get('doc_id', 'deleted')}`"
+        )
+    except Exception as exc:
+        return f"❌ CDC Event Failed: `{exc}`"
+
+
+def handle_prewarm_cache_ui() -> Tuple[str, str, str, str, str]:
+    """Triggers Instacart-style offline head-query cache pre-warming and refreshes Tab 4."""
+    try:
+        resp = requests.post(f"{BACKEND_URL}/cache/prewarm", json={}, timeout=60)
+        resp.raise_for_status()
+        d = resp.json()
+        msg = (
+            f"🔥 **Cache Pre-Warming Complete:** `prewarmed={d.get('prewarmed_count')}`, "
+            f"`already_cached={d.get('already_cached_count')}`, `latency={d.get('total_latency_ms')}ms`"
+        )
+    except Exception as exc:
+        msg = f"❌ Cache Pre-Warm Failed: `{exc}`"
+    dossier, traces, ledger, prom = fetch_compliance_audit_dashboard()
+    return msg, dossier, traces, ledger, prom
+
+
+def handle_sql_opsbot_query_ui(sql_text: str) -> str:
+    """Runs a strictly read-only SELECT query against POST /inventory/sql-query (Agoda OpsBot)."""
+    try:
+        resp = requests.post(f"{BACKEND_URL}/inventory/sql-query", json={"sql": sql_text}, timeout=15)
+        if resp.status_code != 200:
+            return json.dumps({"status": resp.status_code, "error": resp.json().get("detail", resp.text)}, indent=2)
+        return json.dumps(resp.json(), indent=2)
+    except Exception as exc:
+        return json.dumps({"error": str(exc)}, indent=2)
 
 
 def handle_seed_sample_corpus(strategy: str = "parent_child") -> str:
@@ -584,6 +725,15 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
                     with gr.Row():
                         ingest_btn = gr.Button("📥 Ingest Document", variant="primary")
                         seed_btn = gr.Button("🚀 Seed Enterprise Sample Corpus (3 Docs)")
+                    with gr.Accordion("📄 NVIDIA PDF Layout & Table Ingestion (/ingest/pdf)", open=False):
+                        pdf_file_input = gr.File(label="Upload PDF Document", file_types=[".pdf"])
+                        pdf_ingest_btn = gr.Button("📄 Parse & Ingest PDF")
+                    with gr.Accordion("🔄 Shopify/Notion CDC Incremental Upsert & Delete (/ingest/cdc)", open=False):
+                        with gr.Row():
+                            cdc_ext_id = gr.Textbox(label="CDC external_id", value="catalog-policy-001")
+                            cdc_action = gr.Dropdown(choices=["upsert", "delete"], value="upsert", label="CDC Action")
+                            cdc_version = gr.Number(value=1, minimum=1, precision=0, label="Version")
+                        cdc_btn = gr.Button("🔄 Dispatch CDC Event")
 
                 with gr.Column(scale=1):
                     ingest_out = gr.Markdown(
@@ -676,6 +826,7 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
             )
             with gr.Row():
                 audit_refresh_btn = gr.Button("🔄 Refresh Audit & Observability Dashboard", variant="primary")
+                prewarm_btn = gr.Button("🔥 Pre-Warm Head Queries (Instacart)")
                 erase_doc_input = gr.Textbox(
                     label="GDPR Article 17 Erasure — Target doc_id",
                     placeholder="Paste a doc_id from the Active Corpus table (e.g. doc_...)",
@@ -684,6 +835,13 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
             erase_status_md = gr.Markdown(value="_Ready for compliance inspection or GDPR erasure._")
 
             audit_dossier_md = gr.Markdown(value="_Click 'Refresh Audit & Observability Dashboard' to load the compliance dossier._")
+            with gr.Accordion("🗄️ Agoda OpsBot Read-Only SQL Live Inventory Inspector (/inventory/sql-query)", open=False):
+                sql_query_input = gr.Textbox(
+                    label="Read-Only SELECT Query",
+                    value="SELECT service_name, region, status, active_nodes, p95_latency_ms FROM service_inventory ORDER BY service_name",
+                )
+                sql_run_btn = gr.Button("▶️ Run Read-Only SQL Query")
+                sql_result_code = gr.Code(label="SQL Result JSON", language="json", value="{}")
             audit_traces_md = gr.Markdown(value="_Distributed trace waterfall will appear here._")
             audit_ledger_md = gr.Markdown(value="_Tamper-evident SHA-256 audit ledger will appear here._")
             prom_metrics_code = gr.Code(
@@ -709,6 +867,24 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
         outputs=ingest_out,
     )
     seed_btn.click(handle_seed_sample_corpus, inputs=[chunk_strategy], outputs=ingest_out)
+    pdf_ingest_btn.click(
+        handle_pdf_upload,
+        inputs=[
+            pdf_file_input,
+            doc_title,
+            ingest_tenant,
+            ingest_roles,
+            chunk_strategy,
+            ingest_contextual,
+            ingest_late_chunking,
+        ],
+        outputs=ingest_out,
+    )
+    cdc_btn.click(
+        handle_cdc_event_ui,
+        inputs=[cdc_ext_id, cdc_action, cdc_version, doc_title, doc_input, ingest_tenant, ingest_roles],
+        outputs=ingest_out,
+    )
 
     stream_btn.click(
         stream_query_live,
@@ -747,6 +923,16 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
         fetch_compliance_audit_dashboard,
         inputs=[],
         outputs=[audit_dossier_md, audit_traces_md, audit_ledger_md, prom_metrics_code],
+    )
+    prewarm_btn.click(
+        handle_prewarm_cache_ui,
+        inputs=[],
+        outputs=[erase_status_md, audit_dossier_md, audit_traces_md, audit_ledger_md, prom_metrics_code],
+    )
+    sql_run_btn.click(
+        handle_sql_opsbot_query_ui,
+        inputs=[sql_query_input],
+        outputs=sql_result_code,
     )
     erase_btn.click(
         handle_gdpr_erasure,

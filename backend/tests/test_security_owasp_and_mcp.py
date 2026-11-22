@@ -18,7 +18,7 @@ POISONING_SIGNATURES = [
 
 def test_mcp_tool_manifest_free_of_tool_poisoning():
     """Verifies all MCP tool definitions in MCP_TOOL_MANIFEST are free of hidden poisoning instructions."""
-    assert len(MCP_TOOL_MANIFEST) == 3
+    assert len(MCP_TOOL_MANIFEST) >= 5
     for tool in MCP_TOOL_MANIFEST:
         desc = tool["description"]
         for sig in POISONING_SIGNATURES:

@@ -73,6 +73,30 @@
       "targets": [
         { "expr": "rag_circuit_breaker_open", "legendFormat": "{{service}}", "refId": "A" }
       ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 14 },
+      "id": 6,
+      "title": "User Feedback Ratings & Satisfaction Rate (Zendesk)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rag_user_feedback_total", "legendFormat": "Feedback ({{rating}})", "refId": "A" },
+        { "expr": "rag_user_satisfaction_rate", "legendFormat": "Satisfaction Ratio", "refId": "B" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 14 },
+      "id": 7,
+      "title": "Shared-Prefix KV Cache Hits & Amortized Tokens (LinkedIn)",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rag_prefix_cache_hits_total", "legendFormat": "Prefix Cache Hits", "refId": "A" },
+        { "expr": "rag_prefix_cache_amortized_tokens_total", "legendFormat": "Amortized Prefix Tokens", "refId": "B" }
+      ]
     }
   ],
   "refresh": "5s",
