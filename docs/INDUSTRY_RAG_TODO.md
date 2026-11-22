@@ -146,7 +146,7 @@
   - Implement a **Dynamic Service Discovery Registry** with heartbeat TTL, health checks, and stale-instance eviction (`POST /discovery/register`, `GET /discovery/services`) compatible with Consul / Kubernetes DNS.
   - Add centralized **API Gateway Middleware** for per-tenant/per-IP token-bucket rate limiting (`429 Retry-After`), `X-Request-Id` propagation, and security headers.
   - Add **Service Mesh / mTLS** manifests (`deploy/mesh/` Istio `PeerAuthentication` `STRICT` mTLS + `DestinationRule` retry/outlier policies).
-- [ ] **P4.3 Decentralized Data Management: Database-per-Service, Saga Pattern & CQRS** (`backend/app/data/`)
+- [x] **P4.3 Decentralized Data Management: Database-per-Service, Saga Pattern & CQRS** (`backend/app/data/`)
   - Enforce **Database-per-Service** boundaries across Vector/Search, SQL OpsBot, Audit Ledger, and Feedback stores via strict service interfaces.
   - Implement **Saga Pattern with Compensating Transactions** (`IngestionSaga` rolling back partial Vector/BM25/Graph writes on step failure; `GDPRErasureSaga` coordinating multi-store erasure with compensation logs).
   - Implement **CQRS (Command Query Responsibility Segregation)** separating write commands (`/ingest`, `/ingest/cdc`, `DELETE /documents/{doc_id}`) from lock-free read-optimized materialized projections serving `/documents`, `/corpus/shards-and-clusters`, and `/compliance/audit-report`.
