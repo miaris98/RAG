@@ -39,6 +39,7 @@ from app.models import (
 from app.observability.feedback import feedback_store
 from app.observability.metrics import metrics_collector
 from app.observability.tracing import trace_collector
+from app.resilience.patterns import bulkhead_registry, evaluate_degradation_level, retry_telemetry
 from app.retrieval.embeddings import ModelRegistry
 from app.retrieval.hybrid import retrieval_engine
 from app.retrieval.labeled_queries import labeled_query_store
@@ -125,6 +126,17 @@ async def gdpr_erase_document(doc_id: str):
         "chunks_deleted": chunks_deleted,
         "cache_entries_evicted": cache_evicted,
         "audit_event_hash": audit_event["event_hash"],
+    }
+
+
+@app.get("/health/resilience")
+async def get_resilience_health():
+    """P4.1 Graceful Degradation Matrix, Bulkhead compartments, Circuit Breakers, and Retry telemetry."""
+    return {
+        "degradation": evaluate_degradation_level(),
+        "bulkheads": bulkhead_registry.snapshot(),
+        "retry_telemetry": retry_telemetry.snapshot(),
+        "circuit_breakers": metrics_collector.snapshot()["circuit_breakers"],
     }
 
 

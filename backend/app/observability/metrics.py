@@ -179,10 +179,12 @@ class MetricsCollector:
                 f'rag_circuit_breaker_open{{service="duckduckgo_web"}} {web_open}',
             ]
         from app.observability.feedback import feedback_store
+        from app.resilience.patterns import bulkhead_registry
         from app.retrieval.prefix_cache import prefix_cache
 
         fb = feedback_store.summary(limit=1)
         pc = prefix_cache.stats()
+        bh = bulkhead_registry.snapshot()
         lines.extend(
             [
                 "# HELP rag_user_feedback_total Total thumbs-up and thumbs-down user feedback ratings.",
@@ -198,8 +200,20 @@ class MetricsCollector:
                 "# HELP rag_prefix_cache_amortized_tokens_total Total prompt prefix tokens amortized via KV-cache reuse.",
                 "# TYPE rag_prefix_cache_amortized_tokens_total counter",
                 f'rag_prefix_cache_amortized_tokens_total {pc["amortized_prefix_tokens_total"]}',
+                "# HELP rag_bulkhead_saturation_ratio Current concurrency saturation ratio per bulkhead compartment.",
+                "# TYPE rag_bulkhead_saturation_ratio gauge",
             ]
         )
+        for bh_name, bh_stat in bh.items():
+            lines.append(f'rag_bulkhead_saturation_ratio{{pool="{bh_name}"}} {bh_stat["saturation_ratio"]}')
+        lines.extend(
+            [
+                "# HELP rag_bulkhead_rejected_total Total requests shed by bulkhead saturation per pool.",
+                "# TYPE rag_bulkhead_rejected_total counter",
+            ]
+        )
+        for bh_name, bh_stat in bh.items():
+            lines.append(f'rag_bulkhead_rejected_total{{pool="{bh_name}"}} {bh_stat["total_rejected"]}')
         return "\n".join(lines) + "\n"
 
 

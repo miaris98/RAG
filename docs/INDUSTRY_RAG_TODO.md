@@ -138,7 +138,7 @@
   - Enforce **A2A anti-confused-deputy RBAC delegation** (intersecting peer-agent allowed scopes with caller roles) and log every cross-agent A2A handoff to the SHA-256 tamper-evident audit ledger.
 
 ### P4 — Resilient Microservices Architecture (Fault Tolerance, Traffic, Data, Zero Trust & Chaos)
-- [ ] **P4.1 Resilience & Fault Tolerance (Retries + Jitter, Bulkheads, Graceful Degradation)** (`backend/app/resilience/`)
+- [x] **P4.1 Resilience & Fault Tolerance (Retries + Jitter, Bulkheads, Graceful Degradation)** (`backend/app/resilience/`)
   - Add bounded **Retries with Exponential Backoff & Decorrelated Jitter** around Ollama, DuckDuckGo, Milvus, and RabbitMQ clients (paired with existing Circuit Breakers).
   - Add per-dependency **Bulkhead Isolation** (`BulkheadPool` concurrency semaphores / isolated pools for `milvus_vector`, `ollama_llm`, `sql_opsbot`, `web_search`) with Prometheus saturation gauges.
   - Formalize a **Graceful Degradation Matrix** (`L0 Full -> L1 Extractive/Cached -> L2 BM25+Graph -> L3 Cache-Only`) exposed at `GET /health/resilience`.
