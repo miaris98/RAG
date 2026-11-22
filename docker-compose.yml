@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # 1. RabbitMQ
+  # 1. RabbitMQ (Async Job Queue & Management UI)
   rabbitmq:
     image: rabbitmq:3-management
     container_name: rabbitmq
@@ -13,14 +13,13 @@ services:
     restart: unless-stopped
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq/
-    # ⬇️ ADD THIS BLOCK ⬇️
     healthcheck:
-      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # 2. Milvus Dependencies (REQUIRED for Milvus to run)
+  # 2. Milvus Dependencies (Etcd Metadata Coordination & MinIO Object Storage)
   etcd:
     image: quay.io/coreos/etcd:v3.5.0
     container_name: milvus-etcd
@@ -40,13 +39,16 @@ services:
     environment:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
-    command: minio server /minio_data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: minio server /minio_data --console-address ":9001"
     networks:
       - rag-network
     volumes:
       - minio-data:/minio_data
 
-  # 3. Milvus (Vector Database)
+  # 3. Milvus Standalone (Dense Vector Database)
   milvus:
     image: milvusdb/milvus:v2.3.0
     container_name: milvus-standalone
@@ -64,7 +66,7 @@ services:
     networks:
       - rag-network
 
-  # 4. Ollama (LLM)
+  # 4. Ollama (Local LLM Server)
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
@@ -75,7 +77,7 @@ services:
     networks:
       - rag-network
 
-  # 5. FastAPI Backend
+  # 5. FastAPI Staff RAG Backend (Hybrid Retrieval + Cross-Encoder + LangGraph CRAG/Self-RAG)
   fastapi-backend:
     build:
       context: ./backend
@@ -86,24 +88,36 @@ services:
     networks:
       - rag-network
     environment:
-      # CRITICAL: Override localhost defaults so it finds the containers
       - RABBITMQ_HOST=rabbitmq
       - MILVUS_HOST=milvus-standalone
       - OLLAMA_BASE_URL=http://ollama:11434
+      - LLM_MODEL=llama3.1
+      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+      - RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+      - RELEVANCE_THRESHOLD=0.25
+      - RRF_K=60
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - ZERO_TRUST_JWT_SECRET=${ZERO_TRUST_JWT_SECRET:-staff-rag-local-zero-trust-secret}
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/resilience', timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     depends_on:
       milvus:
         condition: service_started
       ollama:
         condition: service_started
-      # ⬇️ CHANGE THIS BLOCK ⬇️
       rabbitmq:
         condition: service_healthy
     restart: unless-stopped
     volumes:
       - ./backend:/app
 
-  # 6. Frontend
+  # 6. Gradio Observability & Evaluation Studio
   frontend:
     build:
       context: ./frontend
@@ -114,31 +128,67 @@ services:
     networks:
       - rag-network
     environment:
-      # Point to the backend container name
       - BACKEND_URL=http://fastapi-backend:8000
     depends_on:
       - fastapi-backend
     restart: unless-stopped
     volumes:
       - ./frontend:/app
+
+  # 7. Attu (Milvus Vector DB Admin UI)
   attu:
     image: zilliz/attu:v2.3.0
     container_name: attu
     environment:
       MILVUS_URL: milvus-standalone:19530
     ports:
-      - "9090:3000"  # We map it to 9090 to avoid conflict with other apps
+      - "9090:3000"
     depends_on:
       - milvus
     networks:
       - rag-network
+
+  # 8. Prometheus (Metrics Scraper for /metrics/prometheus)
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: rag-prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - fastapi-backend
+    networks:
+      - rag-network
+
+  # 9. Grafana (Pre-provisioned RAG Observability & Audit Dashboard)
+  grafana:
+    image: grafana/grafana:10.4.1
+    container_name: rag-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - rag-network
+
 networks:
   rag-network:
     driver: bridge
 
 volumes:
   rabbitmq-data:
-  milvus-data: # Not used directly if using etcd/minio but good to keep
+  milvus-data:
   etcd-data:
   minio-data:
   ollama-data:
+  grafana-data:

@@ -1,271 +1,699 @@
-import uuid
-import json
-import threading
+"""FastAPI Gateway for the Staff-Level Production RAG System.
+
+Orchestrates:
+- Idempotent Parent-Child & Contextual Document Ingestion (SHA-256 content hashing)
+- Two-Stage Hybrid Retrieval (Dense Milvus + Sparse BM25 via Reciprocal Rank Fusion + Cross-Encoder Reranking)
+- Explicit LangGraph Corrective RAG (CRAG) + Self-RAG Faithfulness StateGraph
+- Asynchronous RabbitMQ Job Queue with Local Thread Fallback
+- Quantitative IR & RAG Ablation Evaluation Suite (HitRate@K, MRR@K, NDCG@K, ContextPrecision@K)
+"""
+
+from contextlib import asynccontextmanager
 import time
-import os
-import pika
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import List, Optional, Dict
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
-# --- CHANGED: Import Milvus instead of FAISS ---
-from langchain_community.vectorstores import Milvus
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_openai.chat_models import ChatOpenAI
-from langchain_core.documents import Document as LangChainDocument
-from langchain_core.tools import tool
-from langchain_core.messages import HumanMessage
-from langchain_community.tools import DuckDuckGoSearchRun
-from langgraph.prebuilt import create_react_agent
-from langgraph.checkpoint.memory import MemorySaver
-
-# --- App & Global State ---
-app = FastAPI()
-
-# --- CONFIGURATION ---
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "127.0.0.1")
-MILVUS_HOST = os.getenv("MILVUS_HOST", "127.0.0.1")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-
-# --- GLOBAL STORAGE (In-Memory for Demo) ---
-JOBS: Dict[str, Dict] = {}
-
-# Global State for Logic
-# We don't need to manually connect to Milvus with pymilvus anymore;
-# LangChain handles it.
-vectorstore = None
-graph = None
-
-# Embeddings (Global)
-embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-
-# LLM Setup
-llm = ChatOpenAI(
-    temperature=0,
-    openai_api_base="http://host.docker.internal:11434/v1",
-    openai_api_key="ollama",
-    model_name="llama3.1"
+from app.a2a.server import a2a_manager, build_agent_card
+from app.agent.graph import execute_rag_pipeline, stream_rag_pipeline_sse
+from app.agent.sql_tool import sql_inventory_tool
+from app.agent.structured import execute_structured_taxonomy_query
+from app.agent.subagents import supervisor_orchestrator
+from app.config import settings
+from app.data import DATABASE_PER_SERVICE_BOUNDARIES, cqrs_read_model, execute_ingestion_saga
+from app.evaluation.benchmark import run_ablation_benchmark
+from app.gateway import APIGatewayMiddleware, gateway_rate_limiter, service_registry
+from app.guardrails.audit import audit_logger
+from app.ingestion.pipeline import ingestion_pipeline
+from app.models import (
+    CDCEventRequest,
+    ChaosConfigRequest,
+    DocumentInput,
+    EvaluationRequest,
+    FeatureFlagUpdateRequest,
+    OrchestrateRequest,
+    OrchestrateResponse,
+    PrewarmCacheRequest,
+    QueryInput,
+    RetrieveDebugRequest,
+    SQLQueryRequest,
+    ServiceRegistrationRequest,
+    ServiceTokenRequest,
+    StructuredQueryRequest,
+    StructuredQueryResponse,
+    UserFeedbackRequest,
+)
+from app.observability.feedback import feedback_store
+from app.observability.metrics import metrics_collector
+from app.observability.tracing import trace_collector
+from app.resilience import (
+    bulkhead_registry,
+    chaos_controller,
+    evaluate_degradation_level,
+    feature_flags,
+    retry_telemetry,
+)
+from app.security import ZeroTrustError, secrets_provider, zero_trust_auth
+from app.retrieval.embeddings import ModelRegistry
+from app.retrieval.hybrid import retrieval_engine
+from app.retrieval.labeled_queries import labeled_query_store
+from app.retrieval.prefix_cache import prefix_cache
+from app.retrieval.semantic_cache import semantic_cache
+from app.worker.consumer import (
+    enqueue_ingestion_job,
+    enqueue_rag_job,
+    get_job_state,
+    start_background_worker,
 )
 
 
-# --- Pydantic Models ---
-class DocumentInput(BaseModel):
-    content: str
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Starts the RabbitMQ background worker thread on FastAPI startup."""
+    start_background_worker()
+    yield
 
 
-class QueryInput(BaseModel):
-    text: str
+app = FastAPI(
+    title="Staff RAG Engineering Platform",
+    description=(
+        "Production-grade Agentic & Corrective RAG (CRAG / Self-RAG) microservice featuring "
+        "Two-Stage Hybrid Retrieval (Milvus Dense + BM25 RRF + Cross-Encoder Reranking) and built-in IR Evaluation."
+    ),
+    version="2.0.0",
+    lifespan=lifespan,
+)
+app.add_middleware(APIGatewayMiddleware)
 
 
-# --- Tools ---
-@tool
-def document_retriever(query: str) -> str:
-    """Find information inside uploaded documents."""
-    import time
-
-    # 1. Debug Print
-    print(f"\n[Worker Thread] 🔍 Executing Search for: '{query}'")
-
-    try:
-        # 2. Re-initialize Embeddings
-        local_embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-
-        # 3. Connect to Milvus
-        vector_db = Milvus(
-            embedding_function=local_embeddings,
-            collection_name="rag_documents",
-            connection_args={"host": MILVUS_HOST, "port": "19530"},
-            consistency_level="Strong"
-        )
-
-        # 4. Run Search
-        docs = vector_db.similarity_search(query, k=5)
-        print(f"[Worker Thread] ✅ Found {len(docs)} documents.")
-
-        # --- NEW LOGGING BLOCK ---
-        if docs:
-            print("[Worker Thread] 📄 RETRIEVED CONTENT:")
-            for i, doc in enumerate(docs):
-                # Print first 100 chars to keep logs clean, or remove [:100] to see all
-                preview = doc.page_content.replace('\n', ' ')
-                print(f"   -> [Doc {i+1}]: {preview}")
-        # -------------------------
-
-        if not docs:
-            print("[Worker Thread] ⚠️ Query returned 0 results.")
-            return "No relevant information found in internal documents."
-
-        # 5. Return content
-        return "\n\n".join([doc.page_content for doc in docs])
-
-    except Exception as e:
-        print(f"[Worker Thread] ❌ ERROR: {e}")
-        return f"Internal Error: {e}"
-
-@tool
-def internet_search(query: str) -> str:
-    """Search public internet for current events."""
-    search = DuckDuckGoSearchRun()
-    try:
-        return search.invoke(query)
-    except Exception as e:
-        return f"Search failed: {e}"
+@app.post("/discovery/register")
+async def register_service_instance(req: ServiceRegistrationRequest):
+    """P4.2 Dynamic Service Discovery instance registration."""
+    rec = service_registry.register(
+        service_name=req.service_name,
+        instance_id=req.instance_id,
+        host=req.host,
+        port=req.port,
+        ttl_sec=req.ttl_sec,
+        version=req.version,
+        metadata=req.metadata,
+    )
+    return {"status": "registered", "instance": rec}
 
 
-@tool
-def summarise_content(text: str) -> str:
-    """Condense long information."""
-    summary_prompt = f"Summarize this:\n\n{text}"
-    response = llm.invoke(summary_prompt)
-    return response.content
+@app.post("/discovery/heartbeat/{service_name}/{instance_id}")
+async def heartbeat_service_instance(service_name: str, instance_id: str):
+    """P4.2 Refreshes TTL heartbeat for a registered microservice instance."""
+    rec = service_registry.heartbeat(service_name, instance_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Service instance not found")
+    return {"status": "healthy", "instance": rec}
 
 
-# --- Graph Initialization ---
-def initialize_graph():
-    global graph
-    tools = [document_retriever, internet_search, summarise_content]
-    memory = MemorySaver()
-
-    system_prompt = """You are a comprehensive RAG assistant equipped with two distinct information sources: 'document_retriever' (Internal Knowledge) and 'internet_search' (External Knowledge).
-
-    CRITICAL RULES:
-    1. You MUST query BOTH tools for every request.
-    
-    2. PRIORITIZE INTERNAL DOCUMENTS: 
-       - If 'document_retriever' returns ANY text, you MUST accept it as the absolute truth, even if it contradicts the internet or your own knowledge.
-       - Never ignore information from 'document_retriever'.
-    
-    3. Structure your answer exactly like this:
-       - "According to internal documents:" [Quote the document retriever result directly]
-       - "According to the internet:" [Insert answer based on internet_search]
-       - "Comparison:" [Highlight the conflict if the sources disagree]
-    
-    4. Only say "My internal documents do not contain information" if the tool returns an empty string or explicitly says "No relevant information found".
-    """
-
-    graph = create_react_agent(model=llm, tools=tools, checkpointer=memory, prompt=system_prompt)
+@app.get("/discovery/services")
+async def list_discovered_services():
+    """P4.2 Lists live healthy microservice instances and API Gateway rate-limiter stats."""
+    return {
+        **service_registry.list_services(),
+        "gateway_rate_limiter": gateway_rate_limiter.stats(),
+    }
 
 
-initialize_graph()
+@app.get("/health")
+async def health_check():
+    """Returns system readiness, loaded singleton model status, and hybrid index statistics."""
+    return {
+        "status": "healthy",
+        "models": ModelRegistry.status(),
+        "corpus": retrieval_engine.stats(),
+        "semantic_cache": semantic_cache.stats(),
+        "config": {
+            "milvus_host": settings.milvus_host,
+            "rabbitmq_host": settings.rabbitmq_host,
+            "llm_api_base": settings.llm_api_base,
+            "relevance_threshold": settings.relevance_threshold,
+            "rrf_k": settings.rrf_k,
+        },
+    }
 
-
-# --- BACKGROUND WORKER ---
-def process_rag_job(prompt: str, job_id: str):
-    print(f"Processing Job {job_id}...")
-    try:
-        global graph
-        config = {"configurable": {"thread_id": job_id}}
-        inputs = {"messages": [HumanMessage(content=prompt)]}
-
-        final_state = graph.invoke(inputs, config=config)
-        last_message = final_state["messages"][-1]
-
-        # Detect Tools
-        tools_used = []
-        for msg in final_state["messages"]:
-            if msg.type == "tool":
-                tools_used.append(msg.name)
-        tools_used = list(set(tools_used))
-
-        JOBS[job_id]["status"] = "completed"
-        JOBS[job_id]["result"] = last_message.content
-        JOBS[job_id]["tools"] = tools_used
-        print(f"Job {job_id} Completed. Tools: {tools_used}")
-
-    except Exception as e:
-        JOBS[job_id]["status"] = "failed"
-        JOBS[job_id]["result"] = str(e)
-        JOBS[job_id]["tools"] = []
-        print(f"Job {job_id} Failed: {e}")
-
-
-def consume_messages():
-    print(" [*] Worker thread started...")
-    while True:
-        try:
-            params = pika.ConnectionParameters(host=RABBITMQ_HOST, heartbeat=600)
-            connection = pika.BlockingConnection(params)
-            channel = connection.channel()
-            channel.queue_declare(queue='rag_jobs')
-            channel.basic_qos(prefetch_count=1)
-
-            def callback(ch, method, properties, body):
-                data = json.loads(body)
-                job_id = data.get("job_id")
-                prompt = data.get("prompt")
-                print(f" [x] Received Job: {job_id}")
-                if job_id and prompt:
-                    JOBS[job_id] = {"status": "processing", "result": None}
-                    process_rag_job(prompt, job_id)
-                ch.basic_ack(delivery_tag=method.delivery_tag)
-
-            channel.basic_consume(queue='rag_jobs', on_message_callback=callback)
-            print(" [*] Worker: Connected and waiting for messages...")
-            channel.start_consuming()
-        except pika.exceptions.AMQPConnectionError:
-            print(" [!] Worker: Connection failed. Retrying in 5s...")
-            time.sleep(5)
-        except Exception as e:
-            print(f" [!] Worker crashed: {e}. Restarting in 5s...")
-            time.sleep(5)
-
-
-@app.on_event("startup")
-def startup_event():
-    thread = threading.Thread(target=consume_messages, daemon=True)
-    thread.start()
-
-
-# --- API Endpoints ---
-# Inside main.py
 
 @app.post("/ingest")
 async def ingest_document(doc: DocumentInput):
-    global vectorstore
-    if not doc.content:
+    """Chunks, deduplicates (SHA-256), and indexes a document into Milvus and BM25."""
+    if not doc.content or not doc.content.strip():
         raise HTTPException(status_code=400, detail="Content cannot be empty.")
     try:
-        docs = [LangChainDocument(page_content=doc.content)]
-        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-        split_docs = splitter.split_documents(docs)
+        return ingestion_pipeline.ingest(doc)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {exc}") from exc
 
-        vectorstore = Milvus.from_documents(
-            split_docs,
-            embeddings,
-            collection_name="rag_documents",
-            connection_args={"host": MILVUS_HOST, "port": "19530"},
-            consistency_level="Strong"  # <--- ADD THIS LINE
+
+@app.post("/ingest-async")
+async def ingest_document_async(doc: DocumentInput):
+    """Queues an asynchronous document ingestion job and returns a job_id."""
+    if not doc.content or not doc.content.strip():
+        raise HTTPException(status_code=400, detail="Content cannot be empty.")
+    return enqueue_ingestion_job(doc)
+
+
+@app.delete("/documents/{doc_id}")
+async def gdpr_erase_document(doc_id: str):
+    """GDPR Article 17 Right-to-be-Forgotten: surgically deletes doc_id across all stores + logs audit."""
+    chunks_deleted = retrieval_engine.delete_by_doc_id(doc_id)
+    cache_evicted = semantic_cache.invalidate_by_doc_id(doc_id)
+    metrics_collector.record_gdpr_erasure()
+    audit_event = audit_logger.log_event(
+        event_type="gdpr_article17_erasure",
+        doc_ids=[doc_id],
+        summary=f"Erased doc_id={doc_id} ({chunks_deleted} chunks, {cache_evicted} cache entries)",
+        metadata={"chunks_deleted": chunks_deleted, "cache_evicted": cache_evicted},
+    )
+    return {
+        "status": "erased",
+        "doc_id": doc_id,
+        "chunks_deleted": chunks_deleted,
+        "cache_entries_evicted": cache_evicted,
+        "audit_event_hash": audit_event["event_hash"],
+    }
+
+
+@app.get("/health/resilience")
+async def get_resilience_health():
+    """P4.1 Graceful Degradation Matrix, Bulkhead compartments, Circuit Breakers, and Retry telemetry."""
+    return {
+        "degradation": evaluate_degradation_level(),
+        "bulkheads": bulkhead_registry.snapshot(),
+        "retry_telemetry": retry_telemetry.snapshot(),
+        "circuit_breakers": metrics_collector.snapshot()["circuit_breakers"],
+    }
+
+
+@app.get("/metrics")
+async def get_observability_metrics():
+    """Returns rolling p50/p95/p99 latencies, cache hit rate, guardrail triggers, and circuit breakers."""
+    return metrics_collector.snapshot()
+
+
+@app.get("/metrics/prometheus")
+async def get_prometheus_metrics():
+    """Exposes RAG operational, latency, corpus, circuit breaker, and audit integrity metrics for Prometheus."""
+    audit_state = audit_logger.get_logs(limit=1)
+    prom_text = metrics_collector.format_prometheus(
+        corpus_stats=retrieval_engine.stats(),
+        chain_valid=bool(audit_state["chain_valid"]),
+        trace_stats=trace_collector.stats(),
+    )
+    return PlainTextResponse(content=prom_text, media_type="text/plain; version=0.0.4; charset=utf-8")
+
+
+@app.get("/traces")
+async def get_distributed_traces(limit: int = 50):
+    """Returns Langfuse-compatible distributed RAG traces and per-node span timings."""
+    return trace_collector.list_traces(limit=limit)
+
+
+@app.get("/traces/{trace_id}")
+async def get_single_trace(trace_id: str):
+    """Retrieves a single distributed RAG trace and its spans by trace_id."""
+    rec = trace_collector.get_trace(trace_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Trace not found")
+    return rec
+
+
+@app.get("/documents")
+async def list_indexed_documents():
+    """Returns per-document inventory, RBAC role lineage, and chunk counts for audit inspection."""
+    docs = retrieval_engine.list_documents()
+    return {"count": len(docs), "documents": docs}
+
+
+@app.get("/audit-logs")
+async def get_audit_logs(limit: int = 100):
+    """Returns tamper-evident SHA-256 hash-chained audit logs and chain integrity verification."""
+    return audit_logger.get_logs(limit=limit)
+
+
+@app.get("/compliance/audit-report")
+async def get_compliance_audit_report(limit: int = 50):
+    """Generates a complete System Compliance & Audit Dossier for regulatory/internal audits."""
+    audit_data = audit_logger.get_logs(limit=limit)
+    metrics_snap = metrics_collector.snapshot()
+    docs = retrieval_engine.list_documents()
+    traces_data = trace_collector.list_traces(limit=20)
+    corpus_stats = retrieval_engine.stats()
+
+    chain_badge = "VALID (Cryptographically Verified)" if audit_data["chain_valid"] else "TAMPERED (Verification Failed)"
+    generated_utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+    lat = metrics_snap["latency_ms"]
+    cbs = metrics_snap["circuit_breakers"]
+
+    lines = [
+        "# 🛡️ System Compliance & Observability Audit Dossier",
+        f"- **Generated:** `{generated_utc}`",
+        f"- **SHA-256 Audit Chain Integrity:** **{chain_badge}** (`{audit_data['total_events']}` total events, head=`{audit_data['head_hash'][:16]}...`)",
+        f"- **GDPR Article 17 Erasures Executed:** `{metrics_snap['gdpr_erasures_total']}` | "
+        f"**Security Guardrail Triggers (PII/Injection):** `{metrics_snap['guardrail_triggers_total']}`",
+        f"- **Operational SLOs:** `total_queries={metrics_snap['total_queries']}`, "
+        f"`p50={lat['p50']} ms`, `p95={lat['p95']} ms`, `p99={lat['p99']} ms`, "
+        f"`cache_hit_rate={metrics_snap['cache_hit_rate']:.2%}`, `crag_fallback_rate={metrics_snap['crag_fallback_rate']:.2%}`",
+        f"- **Downstream Circuit Breakers:** `ollama_llm={cbs['ollama_llm']['state']}`, `duckduckgo_web={cbs['duckduckgo_web']['state']}`",
+        f"- **Langfuse Distributed Tracing:** `{traces_data['total_traces']}` traces recorded "
+        f"(Langfuse external sync configured: `{traces_data['langfuse_configured']}`, synced: `{traces_data['langfuse_synced_count']}`)",
+        "",
+        f"## 📚 Active Corpus & RBAC Lineage (`{len(docs)}` Documents, `{corpus_stats.get('total_chunks', 0)}` Chunks)",
+        "| Doc ID | Title | Tenant | Authorized Roles | Chunks | Parent Windows | Source |",
+        "| :--- | :--- | :--- | :--- | :---: | :---: | :--- |",
+    ]
+    if not docs:
+        lines.append("| - | _No active documents in corpus_ | - | - | 0 | 0 | - |")
+    else:
+        for d in docs:
+            roles_str = ", ".join(d["access_roles"])  # type: ignore[arg-type]
+            lines.append(
+                f"| `{d['doc_id']}` | {d['title']} | `{d['tenant_id']}` | `{roles_str}` | "
+                f"{d['chunk_count']} | {d['parent_windows_count']} | `{d['source']}` |"
+            )
+
+    gdpr_summary = {
+        "article_17_erasures_total": metrics_snap["gdpr_erasures_total"],
+        "pii_and_injection_guardrail_triggers": metrics_snap["guardrail_triggers_total"],
+        "rbac_prefiltering_enabled": True,
+        "audit_chain_valid": audit_data["chain_valid"],
+        "active_documents_count": len(docs),
+    }
+
+    fb_summary = feedback_store.summary(limit=20)
+    return {
+        "generated_at_utc": generated_utc,
+        "chain_valid": audit_data["chain_valid"],
+        "head_hash": audit_data["head_hash"],
+        "total_audit_events": audit_data["total_events"],
+        "gdpr_compliance_summary": gdpr_summary,
+        "feedback_summary": fb_summary,
+        "metrics_snapshot": metrics_snap,
+        "document_inventory": docs,
+        "recent_traces": traces_data["traces"],
+        "audit_events": audit_data["events"],
+        "markdown_dossier": "\n".join(lines),
+    }
+
+
+@app.post("/ingest/pdf")
+async def ingest_pdf_document(
+    file: UploadFile = File(...),
+    title: str = Form(default=""),
+    tenant_id: str = Form(default="default"),
+    access_roles: str = Form(default="public"),
+    chunking_strategy: str = Form(default="parent_child"),
+    enable_late_chunking: bool = Form(default=True),
+    enable_contextual_enrichment: bool = Form(default=True),
+):
+    """#10 NVIDIA layout- & table-aware PDF parser + hybrid ingestion endpoint."""
+    try:
+        pdf_bytes = await file.read()
+        roles = [r.strip().lower() for r in access_roles.split(",") if r.strip()] or ["public"]
+        return ingestion_pipeline.ingest_pdf(
+            pdf_bytes=pdf_bytes,
+            filename=file.filename or "uploaded.pdf",
+            title=title,
+            tenant_id=tenant_id,
+            access_roles=roles,
+            chunking_strategy=chunking_strategy,
+            enable_late_chunking=enable_late_chunking,
+            enable_contextual_enrichment=enable_contextual_enrichment,
         )
-        return {"status": "success", "message": "Document ingested to Milvus."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"PDF ingestion failed: {exc}") from exc
+
+
+@app.post("/ingest/cdc")
+async def ingest_cdc_webhook(event: CDCEventRequest):
+    """Shopify/Notion-style CDC incremental upsert/delete endpoint keyed by external_id."""
+    try:
+        return ingestion_pipeline.process_cdc_event(event)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"CDC event processing failed: {exc}") from exc
+
+
+@app.post("/feedback")
+async def record_user_feedback(req: UserFeedbackRequest):
+    """Zendesk-style thumbs-up/down feedback endpoint tied to trace_id and retrieved chunk_ids."""
+    entry = feedback_store.record(
+        rating=req.rating,
+        query=req.query,
+        trace_id=req.trace_id,
+        chunk_ids=req.chunk_ids,
+        user_roles=req.user_roles,
+        comment=req.comment,
+    )
+    audit_logger.log_event(
+        event_type="user_feedback_recorded",
+        actor_roles=req.user_roles,
+        chunk_ids=req.chunk_ids,
+        summary=f"User rated response '{req.rating}' for query '{req.query[:80]}'",
+        metadata={"feedback_id": entry["feedback_id"], "trace_id": req.trace_id, "rating": req.rating},
+    )
+    return {"status": "recorded", "feedback": entry, "summary": feedback_store.summary(limit=5)}
+
+
+@app.get("/feedback")
+async def get_user_feedback_summary(limit: int = 25):
+    """Returns rolling user satisfaction KPIs and recent thumbs-up/down feedback entries."""
+    return feedback_store.summary(limit=limit)
+
+
+@app.post("/ingest-sample")
+async def ingest_sample_corpus(strategy: str = "parent_child"):
+    """Seeds the built-in Enterprise Architecture & Governance sample corpus."""
+    try:
+        return ingestion_pipeline.ingest_sample_corpus(strategy=strategy)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Sample ingestion failed: {exc}") from exc
+
+
+@app.get("/corpus")
+async def get_corpus_stats():
+    """Returns current document, parent-window, and chunk statistics."""
+    return retrieval_engine.stats()
+
+
+@app.delete("/corpus")
+async def clear_corpus():
+    """Clears the in-memory hybrid index and semantic cache for clean benchmark resets."""
+    retrieval_engine.clear()
+    semantic_cache.clear()
+    return {"status": "cleared", "corpus": retrieval_engine.stats()}
+
+
+@app.get("/corpus/shards-and-clusters")
+async def get_corpus_shards_and_clusters():
+    """#14 Spotify Semantic ID clusters & #20 Airbnb tenant shard topology."""
+    return retrieval_engine.get_shards_and_clusters()
+
+
+@app.post("/retrieve")
+async def debug_retrieve(req: RetrieveDebugRequest):
+    """Directly executes Pre-Filtered RBAC + Tri-Modal Hybrid Retrieval without LLM generation."""
+    if not req.query or not req.query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty.")
+    chunks = retrieval_engine.retrieve(
+        queries=[req.query],
+        mode=req.retrieval_mode,
+        top_k=req.top_k,
+        promote_parents=True,
+        tenant_id=req.tenant_id,
+        user_roles=req.user_roles,
+        semantic_id_prefix=req.semantic_id_prefix,
+    )
+    return {
+        "query": req.query,
+        "retrieval_mode": req.retrieval_mode,
+        "tenant_id": req.tenant_id,
+        "user_roles": req.user_roles,
+        "semantic_id_prefix": req.semantic_id_prefix,
+        "count": len(chunks),
+        "retrieval_funnel": retrieval_engine.get_last_funnel(),
+        "results": [c.model_dump() for c in chunks],
+    }
+
+
+@app.post("/query-stream")
+async def query_stream(query: QueryInput):
+    """Streams real-time LangGraph node progression and final cited answer via Server-Sent Events (SSE)."""
+    if not query.text or not query.text.strip():
+        raise HTTPException(status_code=400, detail="Query text cannot be empty.")
+    return StreamingResponse(
+        stream_rag_pipeline_sse(query),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/submit-job")
 async def submit_job(query: QueryInput):
-    job_id = str(uuid.uuid4())
-    payload = {"job_id": job_id, "prompt": query.text}
+    """Enqueues an asynchronous RAG query job into RabbitMQ (with automatic local fallback)."""
+    if not query.text or not query.text.strip():
+        raise HTTPException(status_code=400, detail="Query text cannot be empty.")
     try:
-        connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))
-        channel = connection.channel()
-        channel.queue_declare(queue='rag_jobs')
-        channel.basic_publish(
-            exchange='',
-            routing_key='rag_jobs',
-            body=json.dumps(payload),
-            properties=pika.BasicProperties(delivery_mode=2)
-        )
-        connection.close()
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"RabbitMQ unavailable: {e}")
-    JOBS[job_id] = {"status": "queued", "result": None}
-    return {"job_id": job_id, "status": "queued"}
+        return enqueue_rag_job(query)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/get-job/{job_id}")
 async def get_job(job_id: str):
-    job = JOBS.get(job_id)
+    """Retrieves the status, cited answer, tool audit, and pipeline trace for a submitted job."""
+    job = get_job_state(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+
+@app.post("/query-structured", response_model=StructuredQueryResponse)
+async def query_structured_taxonomy(req: StructuredQueryRequest):
+    """DoorDash Inverted RAG + Ramp Rule-Grounded structured JSON classification endpoint."""
+    try:
+        return execute_structured_taxonomy_query(req)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Structured query failed: {exc}") from exc
+
+
+@app.post("/cache/prewarm")
+async def prewarm_head_query_cache(req: PrewarmCacheRequest = PrewarmCacheRequest()):
+    """#22 Instacart offline head-query cache pre-warming into role-scoped Semantic & Prefix Caches."""
+    t0 = time.perf_counter()
+    prewarmed = 0
+    already_cached = 0
+    for q_text in req.queries:
+        if not q_text or not q_text.strip():
+            continue
+        out = execute_rag_pipeline(
+            QueryInput(
+                text=q_text.strip(),
+                tenant_id=req.tenant_id,
+                user_roles=req.user_roles,
+                retrieval_mode=req.retrieval_mode,
+                top_k=req.top_k,
+                enable_web_search=False,
+                enable_semantic_cache=True,
+                max_retries=0,
+            )
+        )
+        if out.get("trace", {}).get("cache_hit"):
+            already_cached += 1
+        else:
+            prewarmed += 1
+
+    elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+    audit_logger.log_event(
+        event_type="cache_prewarmed",
+        actor_tenant=req.tenant_id,
+        actor_roles=req.user_roles,
+        summary=f"Pre-warmed {prewarmed} head queries ({already_cached} already cached) in {elapsed_ms}ms",
+        metadata={"prewarmed_count": prewarmed, "already_cached_count": already_cached},
+    )
+    return {
+        "status": "success",
+        "prewarmed_count": prewarmed,
+        "already_cached_count": already_cached,
+        "total_latency_ms": elapsed_ms,
+        "cache_stats": {
+            "semantic_cache": semantic_cache.stats(),
+            "prefix_cache": prefix_cache.stats(),
+        },
+    }
+
+
+@app.get("/cache/stats")
+async def get_cache_statistics():
+    """Returns combined Semantic Query Cache & LinkedIn Shared-Prefix Prompt Cache telemetry."""
+    return {
+        "semantic_cache": semantic_cache.stats(),
+        "prefix_cache": prefix_cache.stats(),
+    }
+
+
+@app.get("/inventory/sql-status")
+async def get_live_sql_inventory_status():
+    """#25 Agoda OpsBot live SQL service inventory & active incidents snapshot."""
+    return sql_inventory_tool.get_live_snapshot()
+
+
+@app.post("/inventory/sql-query")
+async def run_readonly_sql_inventory_query(req: SQLQueryRequest):
+    """#25 Agoda OpsBot strictly read-only SELECT SQL query endpoint."""
+    try:
+        return sql_inventory_tool.execute_readonly_sql(req.sql)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"SQL query failed: {exc}") from exc
+
+
+@app.get("/agent/subagents")
+async def list_specialist_subagents():
+    """P3.3 Lists registered least-privilege specialist subagents and their scoped toolsets."""
+    subs = supervisor_orchestrator.list_subagents()
+    return {"count": len(subs), "subagents": subs}
+
+
+@app.post("/agent/orchestrate", response_model=OrchestrateResponse)
+async def orchestrate_specialist_subagents(req: OrchestrateRequest):
+    """P3.3 Parallel Supervisor orchestration across retrieval, SQL OpsBot, compliance auditor, and web specialists."""
+    try:
+        return supervisor_orchestrator.orchestrate(req)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Multi-agent orchestration failed: {exc}") from exc
+
+
+@app.get("/.well-known/agent.json")
+async def get_a2a_agent_card(request: Request):
+    """P3.4 Google A2A Agent Card discovery endpoint advertising skills, streaming, and DelegatedRBAC auth."""
+    base = str(request.base_url).rstrip("/")
+    return build_agent_card(base_url=base)
+
+
+@app.post("/a2a")
+async def handle_a2a_jsonrpc_endpoint(request: Request):
+    """P3.4/P4.6 Google A2A JSON-RPC 2.0 endpoint with Zero Trust X-Service-Token verification when supplied."""
+    svc_token = request.headers.get("X-Service-Token", "").strip()
+    if svc_token:
+        if svc_token.lower().startswith("bearer "):
+            svc_token = svc_token[7:].strip()
+        try:
+            zero_trust_auth.verify_token(
+                svc_token,
+                expected_audience="rag-gateway-api",
+                prevent_replay=True,
+            )
+        except ZeroTrustError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    payload = await request.json()
+    peer_agent_id = request.headers.get("X-Peer-Agent-Id")
+    if payload.get("method") == "tasks/sendSubscribe":
+        return StreamingResponse(
+            a2a_manager.stream_task_sse(payload, peer_agent_id=peer_agent_id),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    return a2a_manager.handle_jsonrpc(payload, peer_agent_id=peer_agent_id)
+
+
+@app.post("/saga/ingest")
+async def ingest_document_via_saga(doc: DocumentInput, inject_failure_step: str = ""):
+    """P4.3 Saga Pattern ingestion executing automatic reverse compensating rollbacks on failure."""
+    if not doc.content or not doc.content.strip():
+        raise HTTPException(status_code=400, detail="Document content cannot be empty.")
+    return execute_ingestion_saga(doc, inject_failure_step=inject_failure_step or None)
+
+
+@app.get("/cqrs/read-model")
+async def get_cqrs_read_projection():
+    """P4.3 Lock-free CQRS materialized read projection decoupled from write-path stores."""
+    return cqrs_read_model.snapshot()
+
+
+@app.get("/data/boundaries")
+async def get_database_per_service_boundaries():
+    """P4.3 Database-per-Service ownership boundaries preventing cross-service DB coupling."""
+    return {"count": len(DATABASE_PER_SERVICE_BOUNDARIES), "boundaries": DATABASE_PER_SERVICE_BOUNDARIES}
+
+
+@app.post("/security/token")
+async def issue_zero_trust_service_token(req: ServiceTokenRequest):
+    """P4.4 Issues a short-lived (<=300s) Zero Trust HS256 service JWT with jti replay ID."""
+    try:
+        token = zero_trust_auth.issue_token(
+            subject=req.subject,
+            audience=req.audience,
+            roles=req.roles,
+            ttl_sec=req.ttl_sec,
+        )
+        audit_logger.log_event(
+            event_type="zero_trust_token_issued",
+            actor_roles=req.roles,
+            summary=f"Issued short-lived JWT ({req.ttl_sec}s) for subject='{req.subject}' aud='{req.audience}'",
+        )
+        return {"token_type": "Bearer", "ttl_sec": req.ttl_sec, "token": token}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/security/verify")
+async def verify_zero_trust_service_token(request: Request):
+    """P4.4 Verifies an X-Service-Token JWT signature, expiry, audience, and jti replay protection."""
+    token = request.headers.get("X-Service-Token", "").strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    try:
+        claims = zero_trust_auth.verify_token(token, expected_audience="rag-gateway-api", prevent_replay=True)
+        return {"valid": True, "claims": claims}
+    except ZeroTrustError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+@app.get("/ops/feature-flags")
+async def get_progressive_delivery_feature_flags(subject_key: str = "default"):
+    """P4.5 Returns Canary percentage feature flags, evaluations for subject_key, and active Blue-Green track."""
+    return feature_flags.snapshot(subject_key=subject_key)
+
+
+@app.post("/ops/feature-flags")
+async def update_progressive_delivery_feature_flag(req: FeatureFlagUpdateRequest):
+    """P4.5 Updates a Canary percentage feature flag and optionally switches the Blue-Green release track."""
+    try:
+        feature_flags.set_flag(
+            flag_name=req.flag_name,
+            enabled=req.enabled,
+            rollout_percentage=req.rollout_percentage,
+            description=req.description,
+        )
+        if req.active_release_track is not None:
+            feature_flags.set_release_track(req.active_release_track)
+        audit_logger.log_event(
+            event_type="progressive_delivery_updated",
+            summary=f"Flag '{req.flag_name}' enabled={req.enabled} rollout={req.rollout_percentage}% track={feature_flags.active_release_track}",
+        )
+        return feature_flags.snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/ops/chaos")
+async def get_chaos_controller_status():
+    """P4.5 Returns gated Chaos Engineering fault-injection status and counters."""
+    return chaos_controller.snapshot()
+
+
+@app.post("/ops/chaos")
+async def configure_chaos_fault_injector(req: ChaosConfigRequest):
+    """P4.5 Configures controlled latency or synthetic failure injection for resilience verification."""
+    try:
+        state = chaos_controller.configure(
+            enabled=req.enabled,
+            target=req.target,
+            mode=req.mode,
+            failure_rate=req.failure_rate,
+            latency_ms=req.latency_ms,
+        )
+        audit_logger.log_event(
+            event_type="chaos_config_updated",
+            summary=f"Chaos enabled={req.enabled} target={req.target} mode={req.mode} rate={req.failure_rate} lat={req.latency_ms}ms",
+        )
+        return state
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/evaluate")
+async def evaluate_rag_pipeline(req: EvaluationRequest = EvaluationRequest()):
+    """Executes the Golden QA Ablation Study across Dense, Sparse, Hybrid RRF, and Hybrid + Reranker."""
+    try:
+        return run_ablation_benchmark(req)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Evaluation failed: {exc}") from exc

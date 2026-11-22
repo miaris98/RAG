@@ -1,0 +1,46 @@
+name: Eval-Driven Development (EDD) RAG CI Gate
+
+on:
+  push:
+    branches: [ main, feat/* ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  rag-tdd-and-ablation-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install backend test dependencies
+        run: |
+          pip install fastapi pydantic pydantic-settings pytest httpx rank-bm25 requests python-multipart
+
+      - name: Frontend & Smoke Script Syntax Check
+        run: python -m py_compile frontend/app.py scripts/docker_stack_smoke_test.py
+
+      - name: Run TDD Unit & Integration Suite (Security, GDPR, Hybrid, Agent)
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: pytest tests/ -v
+
+      - name: Run 5-Mode Retrieval Ablation Regression Gate
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: |
+          python -c "
+          from app.evaluation.benchmark import run_ablation_benchmark
+          from app.models import EvaluationRequest
+          res = run_ablation_benchmark(EvaluationRequest(top_k=3))
+          s = {r['mode']: r for r in res['summaries']}
+          assert s['hybrid_graph_rerank']['hit_rate_at_k'] >= 0.9, 'HitRate@3 regression!'
+          assert s['hybrid_graph_rerank']['mrr_at_k'] >= 0.9, 'MRR@3 regression!'
+          print('EDD Regression Gate PASSED:', s['hybrid_graph_rerank'])
+          "

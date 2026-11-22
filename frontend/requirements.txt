@@ -1,13 +1,4 @@
-gradio
+gradio>=4.44.0
+huggingface_hub>=0.25.0,<1.0.0
 requests
-fastapi
-uvicorn
 pypdf
-sentence-transformers
-faiss-cpu
-langchain-text-splitters
-langchain
-langchain-community
-langchain-core
-pika
-pymilvus
