@@ -19,7 +19,7 @@ jobs:
 
       - name: Install backend test dependencies
         run: |
-          pip install fastapi pydantic pydantic-settings pytest httpx rank-bm25
+          pip install fastapi pydantic pydantic-settings pytest httpx rank-bm25 requests python-multipart
 
       - name: Run TDD Unit & Integration Suite (Security, GDPR, Hybrid, Agent)
         working-directory: backend

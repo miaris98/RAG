@@ -17,5 +17,6 @@ rank-bm25
 duckduckgo-search
 ddgs
 pypdf
+python-multipart
 pytest
 httpx
