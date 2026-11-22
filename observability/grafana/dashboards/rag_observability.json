@@ -97,6 +97,18 @@
         { "expr": "rag_prefix_cache_hits_total", "legendFormat": "Prefix Cache Hits", "refId": "A" },
         { "expr": "rag_prefix_cache_amortized_tokens_total", "legendFormat": "Amortized Prefix Tokens", "refId": "B" }
       ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 21 },
+      "id": 8,
+      "title": "P4 Bulkhead Compartment Saturation & Rejections",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rag_bulkhead_saturation_ratio", "legendFormat": "Saturation ({{pool}})", "refId": "A" },
+        { "expr": "rag_bulkhead_rejected_total", "legendFormat": "Rejected ({{pool}})", "refId": "B" }
+      ]
     }
   ],
   "refresh": "5s",

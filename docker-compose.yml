@@ -99,7 +99,13 @@ services:
       - LANGFUSE_HOST=${LANGFUSE_HOST:-}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - ZERO_TRUST_JWT_SECRET=${ZERO_TRUST_JWT_SECRET:-staff-rag-local-zero-trust-secret}
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/resilience', timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     depends_on:
       milvus:
         condition: service_started
