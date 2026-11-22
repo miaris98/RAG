@@ -21,6 +21,9 @@ jobs:
         run: |
           pip install fastapi pydantic pydantic-settings pytest httpx rank-bm25 requests python-multipart
 
+      - name: Frontend & Smoke Script Syntax Check
+        run: python -m py_compile frontend/app.py scripts/docker_stack_smoke_test.py
+
       - name: Run TDD Unit & Integration Suite (Security, GDPR, Hybrid, Agent)
         working-directory: backend
         env:
