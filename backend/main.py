@@ -248,7 +248,7 @@ async def get_compliance_audit_report(limit: int = 50):
     cbs = metrics_snap["circuit_breakers"]
 
     lines = [
-        "# 🛡️ System Compliance & Observability Audit Dossier",
+        "# System Compliance & Observability Audit Dossier",
         f"- **Generated:** `{generated_utc}`",
         f"- **SHA-256 Audit Chain Integrity:** **{chain_badge}** (`{audit_data['total_events']}` total events, head=`{audit_data['head_hash'][:16]}...`)",
         f"- **GDPR Article 17 Erasures Executed:** `{metrics_snap['gdpr_erasures_total']}` | "
@@ -260,7 +260,7 @@ async def get_compliance_audit_report(limit: int = 50):
         f"- **Langfuse Distributed Tracing:** `{traces_data['total_traces']}` traces recorded "
         f"(Langfuse external sync configured: `{traces_data['langfuse_configured']}`, synced: `{traces_data['langfuse_synced_count']}`)",
         "",
-        f"## 📚 Active Corpus & RBAC Lineage (`{len(docs)}` Documents, `{corpus_stats.get('total_chunks', 0)}` Chunks)",
+        f"## Active Corpus & RBAC Lineage (`{len(docs)}` Documents, `{corpus_stats.get('total_chunks', 0)}` Chunks)",
         "| Doc ID | Title | Tenant | Authorized Roles | Chunks | Parent Windows | Source |",
         "| :--- | :--- | :--- | :--- | :---: | :---: | :--- |",
     ]

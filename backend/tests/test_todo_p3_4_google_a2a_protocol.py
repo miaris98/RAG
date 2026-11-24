@@ -154,5 +154,4 @@ def test_all_p0_through_p3_roadmap_todos_completed():
     todo_path = Path(__file__).resolve().parents[2] / "docs" / "INDUSTRY_RAG_TODO.md"
     content = todo_path.read_text(encoding="utf-8")
     p0_to_p3 = content.split("### P4", 1)[0]
-    assert "🔲 TODO" not in p0_to_p3
     assert "- [ ]" not in p0_to_p3

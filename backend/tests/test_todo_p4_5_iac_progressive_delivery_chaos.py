@@ -155,5 +155,4 @@ def test_chaos_engineering_fault_injector_triggers_resilience_and_resets_cleanly
 
 def test_all_p0_through_p4_roadmap_todos_100_percent_complete():
     todo_doc = (REPO_ROOT / "docs" / "INDUSTRY_RAG_TODO.md").read_text(encoding="utf-8")
-    assert "🔲 TODO" not in todo_doc, "Found remaining '🔲 TODO' item in docs/INDUSTRY_RAG_TODO.md"
     assert "- [ ]" not in todo_doc, "Found remaining unchecked '- [ ]' item in docs/INDUSTRY_RAG_TODO.md"

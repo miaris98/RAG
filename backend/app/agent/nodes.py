@@ -284,7 +284,7 @@ def _format_citations_bibliography(citations: List[Dict[str, Any]]) -> str:
     """Formats the verified inline citations bibliography block appended to grounded answers."""
     if not citations:
         return ""
-    lines = ["\n\n### 📚 Verified Inline Citations & Evidence Quotes"]
+    lines = ["\n\n### Verified Inline Citations & Evidence Quotes"]
     for cit in citations:
         terms = ", ".join(f"`{t}`" for t in cit.get("matched_terms", [])[:6]) or "semantic"
         lines.append(
@@ -460,7 +460,7 @@ def verify_faithfulness_self_rag(state: RAGGraphState) -> Dict[str, Any]:
         citation_bonus = 0.25 if citation_count > 0 else 0.0
         faithfulness = round(min(1.0, 0.75 * min(1.0, support_ratio * 1.35) + citation_bonus), 4)
 
-    if structured_citations and "### 📚 Verified Inline Citations & Evidence Quotes" not in final_answer:
+    if structured_citations and "### Verified Inline Citations & Evidence Quotes" not in final_answer:
         final_answer = final_answer + _format_citations_bibliography(structured_citations)
 
     tools = list(state.get("tools_used") or [])

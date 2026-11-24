@@ -103,7 +103,7 @@ class LiveSQLInventoryTool:
 
         snap = self.get_live_snapshot()
         lines = [
-            "### 🗄️ Live SQL Inventory & Incident DB (Agoda OpsBot Tool)",
+            "### Live SQL Inventory & Incident DB (Agoda OpsBot Tool)",
             "| Service | Region | Status | Active Nodes | p95 Latency | Error Budget |",
             "| :--- | :--- | :---: | :---: | :---: | :---: |",
         ]

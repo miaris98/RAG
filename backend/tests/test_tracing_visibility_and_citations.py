@@ -141,4 +141,4 @@ def test_structured_inline_citations_and_evidence_quotes():
 
     answer = out["answer"]
     assert "[Doc 1" in answer
-    assert "### 📚 Verified Inline Citations & Evidence Quotes" in answer
+    assert "### Verified Inline Citations & Evidence Quotes" in answer

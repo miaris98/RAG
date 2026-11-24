@@ -1,4 +1,4 @@
-# 🎯 Staff+ RAG & Resilient Microservices Interview Guide
+# Staff+ RAG & Resilient Microservices Interview Guide
 
 This guide is designed for **Senior / Staff / Principal Applied AI & Systems Design interviews**. Rather than focusing on mathematical formulas, it explains **why** the platform is designed the way it is, **how** the pieces fit together, the **engineering principles** enforced, the **tradeoffs and assumptions** made, and the **known gaps** to address for multi-replica cloud scale.
 

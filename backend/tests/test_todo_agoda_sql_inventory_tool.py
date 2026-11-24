@@ -61,10 +61,13 @@ def test_langgraph_agent_combines_live_sql_inventory_with_vector_rag():
 
 def test_all_50_company_matrix_rows_have_zero_pending_todo_markers():
     """Verifies Section 1 (50-Company Matrix) & P0-P2 Roadmap in docs/INDUSTRY_RAG_TODO.md are 100% completed."""
+    import re
     from pathlib import Path
 
     todo_path = Path(__file__).resolve().parents[2] / "docs" / "INDUSTRY_RAG_TODO.md"
     content = todo_path.read_text(encoding="utf-8")
     completed_sections = content.split("### P3", 1)[0]
-    assert "🔲 TODO" not in completed_sections
+    matrix_rows = [ln for ln in completed_sections.splitlines() if re.match(r"^\|\s*\d+\s*\|", ln)]
+    assert matrix_rows, "Expected numbered company matrix rows in docs/INDUSTRY_RAG_TODO.md"
+    assert all("Implemented" in row for row in matrix_rows)
     assert "- [ ]" not in completed_sections
