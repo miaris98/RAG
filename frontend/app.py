@@ -122,7 +122,7 @@ def fetch_compliance_audit_dashboard() -> Tuple[str, str, str, str]:
         report_resp.raise_for_status()
         report = report_resp.json()
     except Exception as exc:
-        err = f"❌ Could not fetch audit report from backend: `{exc}`"
+        err = f"Could not fetch audit report from backend: `{exc}`"
         return err, "_Unavailable_", "_Unavailable_", "# Error fetching Prometheus metrics"
 
     try:
@@ -137,7 +137,7 @@ def fetch_compliance_audit_dashboard() -> Tuple[str, str, str, str]:
     # Append Zendesk Feedback KPIs, Airbnb Shards & Spotify Semantic Clusters, LinkedIn Prefix Cache & Agoda SQL Snapshot
     fb = report.get("feedback_summary") or {}
     extra_sections = [
-        "\n### 👍 User Feedback & Satisfaction (Zendesk)",
+        "\n### User Feedback & Satisfaction (Zendesk)",
         f"- **Thumbs Up:** `{fb.get('thumbs_up', 0)}` | **Thumbs Down:** `{fb.get('thumbs_down', 0)}` | "
         f"**Satisfaction Rate:** `{fb.get('satisfaction_rate', 1.0) * 100:.1f}%`",
     ]
@@ -147,7 +147,7 @@ def fetch_compliance_audit_dashboard() -> Tuple[str, str, str, str]:
         clusters_preview = ", ".join(f"`{k}:{v}`" for k, v in list((topo.get("semantic_clusters") or {}).items())[:6]) or "`none`"
         extra_sections.extend(
             [
-                "\n### 🗂️ Airbnb Tenant Shards & Spotify Semantic ID Clusters",
+                "\n### Airbnb Tenant Shards & Spotify Semantic ID Clusters",
                 f"- **Active Shards (`{topo.get('total_shards', 0)}`):** {shards_preview}",
                 f"- **Semantic Clusters (`{topo.get('total_semantic_clusters', 0)}`):** {clusters_preview}",
             ]
@@ -160,7 +160,7 @@ def fetch_compliance_audit_dashboard() -> Tuple[str, str, str, str]:
         sc = cstats.get("semantic_cache") or {}
         extra_sections.extend(
             [
-                "\n### ⚡ LinkedIn Shared-Prefix KV Cache & Instacart Semantic Cache",
+                "\n### LinkedIn Shared-Prefix KV Cache & Instacart Semantic Cache",
                 f"- **Prefix Cache:** `cached={pc.get('cached_prefixes', 0)}`, `hits={pc.get('prefix_hits', 0)}`, "
                 f"`amortized_tokens={pc.get('amortized_prefix_tokens_total', 0)}`",
                 f"- **Semantic Cache:** `entries={sc.get('size', 0)}`, `hits={sc.get('hits', 0)}`, `misses={sc.get('misses', 0)}`",
@@ -182,7 +182,7 @@ def fetch_compliance_audit_dashboard() -> Tuple[str, str, str, str]:
         ch = requests.get(f"{BACKEND_URL}/ops/chaos", timeout=8).json()
         extra_sections.extend(
             [
-                "\n### 🧩 P4 Microservices Resilience, Discovery, CQRS & Progressive Delivery",
+                "\n### P4 Microservices Resilience, Discovery, CQRS & Progressive Delivery",
                 f"- **Graceful Degradation Tier:** `{deg.get('level', 'N/A')}` — {deg.get('summary', '')}",
                 f"- **Bulkhead Compartments:** {bh_str or '`none`'}",
                 f"- **Dynamic Service Discovery:** `{disc.get('total_instances', 0)}` live instances across `{len(disc.get('services') or {})}` services",
@@ -198,7 +198,7 @@ def fetch_compliance_audit_dashboard() -> Tuple[str, str, str, str]:
     # Format Distributed Traces (Langfuse / Span Waterfall)
     traces = report.get("recent_traces") or []
     trace_lines = [
-        "### 🔭 Distributed Traces & Span Waterfall (Langfuse / OpenTelemetry)",
+        "### Distributed Traces & Span Waterfall (Langfuse / OpenTelemetry)",
         "| Trace ID | Query (PII-Sanitized) | Route | Cache | Faithfulness | Latency | Node Spans | Langfuse |",
         "| :--- | :--- | :--- | :---: | :---: | :---: | :--- | :--- |",
     ]
@@ -218,16 +218,16 @@ def fetch_compliance_audit_dashboard() -> Tuple[str, str, str, str]:
             trace_lines.extend(
                 [
                     "",
-                    f"#### ⏱️ Latest Trace Hierarchical Span Waterfall (`{traces[0].get('trace_id')}`)",
+                    f"#### Latest Trace Hierarchical Span Waterfall (`{traces[0].get('trace_id')}`)",
                     latest_waterfall,
                 ]
             )
 
     # Format SHA-256 Tamper-Evident Audit Ledger
     events = report.get("audit_events") or []
-    chain_badge = "✅ CHAIN VALID" if report.get("chain_valid") else "❌ TAMPER DETECTED"
+    chain_badge = "CHAIN VALID" if report.get("chain_valid") else "TAMPER DETECTED"
     ledger_lines = [
-        f"### 🔐 Tamper-Evident SHA-256 Audit Ledger ({chain_badge})",
+        f"### Tamper-Evident SHA-256 Audit Ledger ({chain_badge})",
         "| Seq | Event Type | Tenant | Roles | Doc IDs | Summary | Hash Chain (`prev -> event`) |",
         "| :---: | :--- | :--- | :--- | :--- | :--- | :--- |",
     ]
@@ -251,19 +251,19 @@ def handle_gdpr_erasure(doc_id: str) -> Tuple[str, str, str, str, str]:
     cleaned_id = (doc_id or "").strip()
     if not cleaned_id:
         dossier, traces, ledger, prom = fetch_compliance_audit_dashboard()
-        return "⚠️ Please enter a `doc_id` from the Active Corpus table above.", dossier, traces, ledger, prom
+        return "Notice: Please enter a `doc_id` from the Active Corpus table above.", dossier, traces, ledger, prom
 
     try:
         resp = requests.delete(f"{BACKEND_URL}/documents/{cleaned_id}", timeout=15)
         resp.raise_for_status()
         res = resp.json()
         status_msg = (
-            f"✅ **GDPR Article 17 Erasure Complete:** `{res.get('doc_id')}` "
+            f"**GDPR Article 17 Erasure Complete:** `{res.get('doc_id')}` "
             f"(`chunks_deleted={res.get('chunks_deleted')}`, `cache_evicted={res.get('cache_entries_evicted')}`, "
             f"`audit_hash={str(res.get('audit_event_hash', ''))[:12]}...`)"
         )
     except Exception as exc:
-        status_msg = f"❌ Erasure failed: {exc}"
+        status_msg = f"Erasure failed: {exc}"
 
     dossier, traces, ledger, prom = fetch_compliance_audit_dashboard()
     return status_msg, dossier, traces, ledger, prom
@@ -282,7 +282,7 @@ def format_pipeline_trace_markdown(trace: Optional[Dict[str, Any]], tools: list)
     funnel = trace.get("retrieval_funnel") or {}
 
     lines = [
-        "### 🔬 End-to-End Distributed Trace & Retrieval Visibility",
+        "### End-to-End Distributed Trace & Retrieval Visibility",
         f"- **Distributed Trace ID:** `{trace.get('trace_id', 'N/A')}` | **Query Route:** `{trace.get('query_route')}` | "
         f"**Retrieval Mode:** `{trace.get('retrieval_mode')}` | **Semantic Cache Hit:** `{trace.get('cache_hit')}`",
         f"- **RBAC Scope:** `tenant={trace.get('tenant_id')}`, `roles={trace.get('user_roles')}` | "
@@ -298,7 +298,7 @@ def format_pipeline_trace_markdown(trace: Optional[Dict[str, Any]], tools: list)
         lines.extend(
             [
                 "",
-                "#### 🔎 8-Stage Retrieval Candidate Funnel",
+                "#### 8-Stage Retrieval Candidate Funnel",
                 f"`Corpus: {funnel.get('total_corpus_chunks', 0)}` → "
                 f"`RBAC Authorized: {funnel.get('rbac_authorized_chunks', 0)}` → "
                 f"`Dense/BM25/Graph: {funnel.get('dense_candidates_count', 0)}/{funnel.get('sparse_candidates_count', 0)}/{funnel.get('graph_candidates_count', 0)}` → "
@@ -312,7 +312,7 @@ def format_pipeline_trace_markdown(trace: Optional[Dict[str, Any]], tools: list)
     lines.extend(
         [
             "",
-            "#### 📄 Tri-Modal Retrieval Explainability & Prompt Positioning",
+            "#### Tri-Modal Retrieval Explainability & Prompt Positioning",
             "| Rank | Prompt Slot | Chunk ID | Title | RRF Breakdown (D / S / G) | Matched Terms | Matched Entities | Cross-Encoder Prob | CRAG |",
             "| :---: | :---: | :--- | :--- | :---: | :--- | :--- | :---: | :---: |",
         ]
@@ -328,7 +328,7 @@ def format_pipeline_trace_markdown(trace: Optional[Dict[str, Any]], tools: list)
             rrf_str = f"`{rb.get('dense', 0):.4f}` / `{rb.get('sparse', 0):.4f}` / `{rb.get('graph', 0):.4f}`"
             terms_str = ", ".join(f"`{t}`" for t in (chk.get("matched_terms") or [])[:4]) or "—"
             ents_str = ", ".join(f"`{e}`" for e in (chk.get("matched_entities") or [])[:3]) or "—"
-            gate_badge = "✅ PASS" if chk.get("is_relevant") else "❌ PRUNED"
+            gate_badge = "PASS" if chk.get("is_relevant") else "PRUNED"
             lines.append(
                 f"| {idx} | {slot} | `{chk.get('chunk_id', '')[:12]}` | {chk.get('title', '')} | "
                 f"{rrf_str} | {terms_str} | {ents_str} | **`{chk.get('calibrated_prob', 0.0):.3f}`** | {gate_badge} |"
@@ -341,11 +341,11 @@ def format_pipeline_trace_markdown(trace: Optional[Dict[str, Any]], tools: list)
 
     waterfall = trace.get("waterfall_markdown")
     if waterfall:
-        lines.extend(["", "#### ⏱️ Distributed Trace Span Waterfall", waterfall])
+        lines.extend(["", "#### Distributed Trace Span Waterfall", waterfall])
 
     citations = trace.get("citations") or []
     if citations:
-        lines.extend(["", "#### 📚 Structured Inline Citations Extracted"])
+        lines.extend(["", "#### Structured Inline Citations Extracted"])
         for cit in citations:
             lines.append(
                 f"- **{cit['ref_id']}** `{cit['title']}` (§{cit['section']}, `{cit['chunk_id'][:12]}`, "
@@ -370,7 +370,7 @@ def ingest_document(
     enable_late_chunking: bool = False,
 ) -> str:
     if not content or not content.strip():
-        return "⚠️ Please enter document content or click 'Seed Enterprise Sample Corpus'."
+        return "Notice: Please enter document content or click 'Seed Enterprise Sample Corpus'."
     response = ingest_document_to_backend(
         content=content,
         title=title,
@@ -383,12 +383,12 @@ def ingest_document(
         enable_late_chunking=enable_late_chunking,
     )
     if response.get("status") == "error":
-        return f"❌ Failed: {response['message']}"
+        return f"Failed: {response['message']}"
 
     symbols = response.get("code_symbols_extracted") or []
     sym_str = ", ".join(f"`{s}`" for s in symbols[:10]) if symbols else "`none`"
     return (
-        f"✅ **Ingested:** `{response.get('title')}` (`{response.get('doc_id')}`)\n"
+        f"**Ingested:** `{response.get('title')}` (`{response.get('doc_id')}`)\n"
         f"- **RBAC Scope:** `tenant={response.get('tenant_id')}`, `roles={response.get('access_roles')}`\n"
         f"- **Guardrail Flags:** `{response.get('guardrail_flags') or ['clean']}` | "
         f"**Contextual Enrichment:** `{response.get('contextual_enrichment_enabled', False)}` | "
@@ -412,10 +412,10 @@ def handle_pdf_upload(
 ) -> str:
     """Uploads a PDF file to POST /ingest/pdf (NVIDIA layout & table-aware parser)."""
     if not pdf_file:
-        return "⚠️ Please select a `.pdf` file to ingest."
+        return "Notice: Please select a `.pdf` file to ingest."
     file_path = pdf_file if isinstance(pdf_file, str) else getattr(pdf_file, "name", "")
     if not file_path or not os.path.exists(file_path):
-        return "⚠️ Uploaded PDF file path not found."
+        return "Notice: Uploaded PDF file path not found."
     try:
         with open(file_path, "rb") as fh:
             resp = requests.post(
@@ -434,12 +434,12 @@ def handle_pdf_upload(
         resp.raise_for_status()
         d = resp.json()
         return (
-            f"✅ **PDF Ingested (`{d.get('pdf_parser_backend')}`):** `{d.get('title')}` (`{d.get('doc_id')}`)\n"
+            f"**PDF Ingested (`{d.get('pdf_parser_backend')}`):** `{d.get('title')}` (`{d.get('doc_id')}`)\n"
             f"- **Pages Parsed:** `{d.get('pdf_page_count')}` | **Tables Reconstructed:** `{d.get('pdf_tables_detected')}`\n"
             f"- **New Chunks Indexed:** `{d.get('chunks_indexed_new')}` | **Late Chunking:** `{d.get('late_chunking_enabled')}`"
         )
     except Exception as exc:
-        return f"❌ PDF Ingestion Failed: `{exc}`"
+        return f"PDF Ingestion Failed: `{exc}`"
 
 
 def handle_cdc_event_ui(
@@ -453,7 +453,7 @@ def handle_cdc_event_ui(
 ) -> str:
     """Sends a Shopify/Notion-style CDC upsert/delete webhook payload to POST /ingest/cdc."""
     if not external_id or not external_id.strip():
-        return "⚠️ Provide an `external_id` for the CDC event."
+        return "Notice: Provide an `external_id` for the CDC event."
     try:
         resp = requests.post(
             f"{BACKEND_URL}/ingest/cdc",
@@ -471,12 +471,12 @@ def handle_cdc_event_ui(
         resp.raise_for_status()
         d = resp.json()
         return (
-            f"✅ **CDC `{d.get('action')}` Complete (`{d.get('external_id')}`)**\n"
+            f"**CDC `{d.get('action')}` Complete (`{d.get('external_id')}`)**\n"
             f"- **Superseded Docs:** `{d.get('superseded_doc_ids')}` | **Deleted Chunks:** `{d.get('deleted_chunks', 0)}`\n"
             f"- **Active Doc ID:** `{d.get('doc_id', 'deleted')}`"
         )
     except Exception as exc:
-        return f"❌ CDC Event Failed: `{exc}`"
+        return f"CDC Event Failed: `{exc}`"
 
 
 def handle_prewarm_cache_ui() -> Tuple[str, str, str, str, str]:
@@ -486,11 +486,11 @@ def handle_prewarm_cache_ui() -> Tuple[str, str, str, str, str]:
         resp.raise_for_status()
         d = resp.json()
         msg = (
-            f"🔥 **Cache Pre-Warming Complete:** `prewarmed={d.get('prewarmed_count')}`, "
+            f"**Cache Pre-Warming Complete:** `prewarmed={d.get('prewarmed_count')}`, "
             f"`already_cached={d.get('already_cached_count')}`, `latency={d.get('total_latency_ms')}ms`"
         )
     except Exception as exc:
-        msg = f"❌ Cache Pre-Warm Failed: `{exc}`"
+        msg = f"Cache Pre-Warm Failed: `{exc}`"
     dossier, traces, ledger, prom = fetch_compliance_audit_dashboard()
     return msg, dossier, traces, ledger, prom
 
@@ -527,11 +527,11 @@ def handle_update_feature_flag_ui(
         resp.raise_for_status()
         d = resp.json()
         return (
-            f"✅ **Progressive Delivery Updated:** `X-Release-Track={d.get('active_release_track')}` | "
+            f"**Progressive Delivery Updated:** `X-Release-Track={d.get('active_release_track')}` | "
             f"`{flag_name}` → `enabled={enabled}`, `rollout={int(rollout_pct)}%`"
         )
     except Exception as exc:
-        return f"❌ Feature Flag update failed: `{exc}`"
+        return f"Feature Flag update failed: `{exc}`"
 
 
 def handle_update_chaos_ui(
@@ -557,20 +557,20 @@ def handle_update_chaos_ui(
         resp.raise_for_status()
         d = resp.json()
         return (
-            f"🧪 **Chaos Controller Updated:** `enabled={d.get('enabled')}`, `target={d.get('target')}`, "
+            f"**Chaos Controller Updated:** `enabled={d.get('enabled')}`, `target={d.get('target')}`, "
             f"`mode={d.get('mode')}`, `failure_rate={d.get('failure_rate')}`, `latency_ms={d.get('latency_ms')}`"
         )
     except Exception as exc:
-        return f"❌ Chaos update failed: `{exc}`"
+        return f"Chaos update failed: `{exc}`"
 
 
 def handle_seed_sample_corpus(strategy: str = "parent_child") -> str:
     response = seed_sample_corpus_on_backend(strategy=strategy)
     if response.get("status") == "error":
-        return f"❌ Failed: {response['message']}"
+        return f"Failed: {response['message']}"
     docs = ", ".join(response.get("documents_loaded", []))
     return (
-        f"✅ **Enterprise Sample Corpus Indexed!**\n"
+        f"**Enterprise Sample Corpus Indexed!**\n"
         f"- **Documents:** {docs}\n"
         f"- **New Chunks Indexed:** `{response.get('chunks_indexed_new')}` "
         f"(Duplicates Skipped: `{response.get('chunks_skipped_duplicate')}`)\n"
@@ -591,7 +591,7 @@ def submit_query(
     enable_guardrails: bool,
 ) -> Tuple[str, Optional[str]]:
     if not query or not query.strip():
-        return "⚠️ Please enter a query.", None
+        return "Notice: Please enter a query.", None
 
     response = submit_job_to_backend(
         query=query,
@@ -606,11 +606,11 @@ def submit_query(
         enable_guardrails=enable_guardrails,
     )
     if "error" in response:
-        return f"❌ Error: {response['error']}", None
+        return f"Error: {response['error']}", None
 
     job_id = response.get("job_id")
     broker = response.get("broker", "rabbitmq")
-    return f"✅ Job Submitted! ID: `{job_id}` (Broker: `{broker}`)\nClick **Check Job Result**.", job_id
+    return f"Job Submitted! ID: `{job_id}` (Broker: `{broker}`)\nClick **Check Job Result**.", job_id
 
 
 def check_status(job_id: Optional[str]) -> Tuple[str, str]:
@@ -624,14 +624,14 @@ def check_status(job_id: Optional[str]) -> Tuple[str, str]:
     trace = status_response.get("trace")
 
     if status == "queued":
-        return f"⏳ Job `{job_id}` is **QUEUED**.", "_Waiting for worker..._"
+        return f"Job `{job_id}` is **QUEUED**.", "_Waiting for worker..._"
     elif status == "processing":
-        return f"⚙️ Job `{job_id}` is **PROCESSING**...", "_Executing LangGraph nodes..._"
+        return f"Job `{job_id}` is **PROCESSING**...", "_Executing LangGraph nodes..._"
     elif status == "completed":
         trace_md = format_pipeline_trace_markdown(trace, tools)
-        return f"✅ **Grounded Response:**\n\n{result}", trace_md
+        return f"**Grounded Response:**\n\n{result}", trace_md
     elif status == "failed":
-        return f"❌ **Job Failed:** {result}", "_Pipeline execution failed._"
+        return f"**Job Failed:** {result}", "_Pipeline execution failed._"
     else:
         return "Unknown job status.", "_No trace available._"
 
@@ -650,7 +650,7 @@ def stream_query_live(
 ) -> Iterator[Tuple[str, str]]:
     """Consumes POST /query-stream SSE events and yields live updates to Gradio."""
     if not query or not query.strip():
-        yield "⚠️ Please enter a query.", "_Waiting for query..._"
+        yield "Notice: Please enter a query.", "_Waiting for query..._"
         return
 
     payload = {
@@ -666,7 +666,7 @@ def stream_query_live(
         "enable_guardrails": bool(enable_guardrails),
     }
 
-    progress_lines: List[str] = ["⚡ **Live LangGraph SSE Stream Started:**"]
+    progress_lines: List[str] = ["**Live LangGraph SSE Stream Started:**"]
     try:
         with requests.post(f"{BACKEND_URL}/query-stream", json=payload, stream=True, timeout=60) as resp:
             resp.raise_for_status()
@@ -679,9 +679,9 @@ def stream_query_live(
                     yield "\n".join(progress_lines), "_Streaming LangGraph execution..._"
                 elif evt.get("event") == "final":
                     trace_md = format_pipeline_trace_markdown(evt.get("trace"), evt.get("tools", []))
-                    yield f"✅ **Grounded Response (SSE Streamed):**\n\n{evt.get('answer', '')}", trace_md
+                    yield f"**Grounded Response (SSE Streamed):**\n\n{evt.get('answer', '')}", trace_md
     except Exception as exc:
-        yield f"❌ SSE Stream Error: {exc}", "_Stream interrupted._"
+        yield f"SSE Stream Error: {exc}", "_Stream interrupted._"
 
 
 def submit_feedback_to_backend(
@@ -691,7 +691,7 @@ def submit_feedback_to_backend(
 ) -> str:
     """Sends thumbs-up/down user feedback to POST /feedback."""
     if not query or not query.strip():
-        return "⚠️ Enter or run a query before submitting feedback."
+        return "Notice: Enter or run a query before submitting feedback."
     try:
         resp = requests.post(
             f"{BACKEND_URL}/feedback",
@@ -707,12 +707,12 @@ def submit_feedback_to_backend(
         data = resp.json()
         s = data.get("summary", {})
         return (
-            f"✅ Feedback recorded (`{rating.upper()}`) | "
-            f"👍 `{s.get('thumbs_up', 0)}` / 👎 `{s.get('thumbs_down', 0)}` "
+            f"Feedback recorded (`{rating.upper()}`) | "
+            f"`{s.get('thumbs_up', 0)}` / `{s.get('thumbs_down', 0)}` "
             f"(Satisfaction: `{s.get('satisfaction_rate', 1.0) * 100:.1f}%`)"
         )
     except Exception as exc:
-        return f"❌ Feedback error: `{exc}`"
+        return f"Feedback error: `{exc}`"
 
 
 def run_multi_agent_supervisor_ui(
@@ -725,7 +725,7 @@ def run_multi_agent_supervisor_ui(
 ) -> Tuple[str, str]:
     """Calls POST /agent/orchestrate and formats multi-agent synthesis + subagent waterfall."""
     if not query or not query.strip():
-        return "⚠️ Enter a query first.", "_Waiting for multi-agent execution..._"
+        return "Notice: Enter a query first.", "_Waiting for multi-agent execution..._"
     try:
         resp = requests.post(
             f"{BACKEND_URL}/agent/orchestrate",
@@ -742,10 +742,10 @@ def run_multi_agent_supervisor_ui(
         resp.raise_for_status()
         d = resp.json()
     except Exception as exc:
-        return f"❌ Multi-Agent Orchestration Error: `{exc}`", "_Failed_"
+        return f"Multi-Agent Orchestration Error: `{exc}`", "_Failed_"
 
     sub_lines = [
-        f"### 🤖 Specialist Subagents Executed (`trace_id={d.get('trace_id')}` | `{d.get('total_latency_ms')} ms`)",
+        f"### Specialist Subagents Executed (`trace_id={d.get('trace_id')}` | `{d.get('total_latency_ms')} ms`)",
         "| Subagent | Status | Latency | Tools Used | Summary |",
         "| :--- | :---: | :---: | :--- | :--- |",
     ]
@@ -757,7 +757,7 @@ def run_multi_agent_supervisor_ui(
     sub_lines.extend(
         [
             "",
-            "#### ⏱️ Supervisor Hierarchical Span Waterfall",
+            "#### Supervisor Hierarchical Span Waterfall",
             d.get("waterfall_markdown", "_No waterfall_"),
         ]
     )
@@ -798,18 +798,86 @@ def run_structured_taxonomy_query_ui(
 def handle_run_evaluation(top_k: int = 3, enable_judge_eval: bool = True) -> str:
     res = run_evaluation_on_backend(top_k=int(top_k), enable_judge_eval=bool(enable_judge_eval))
     if res.get("status") == "error":
-        return f"❌ Evaluation failed: {res.get('message')}"
+        return f"Evaluation failed: {res.get('message')}"
     return res.get("markdown_report", "No report returned.")
 
 
-# --- Gradio 3-Tab Studio Layout ---
+# --- Studio Theme & Stylesheet ---
+
+STUDIO_THEME = gr.themes.Base(
+    primary_hue=gr.themes.colors.blue,
+    secondary_hue=gr.themes.colors.slate,
+    neutral_hue=gr.themes.colors.slate,
+    radius_size=gr.themes.sizes.radius_sm,
+    spacing_size=gr.themes.sizes.spacing_md,
+    text_size=gr.themes.sizes.text_md,
+    font=["Segoe UI", "Inter", "system-ui", "-apple-system", "Helvetica Neue", "sans-serif"],
+    font_mono=["Cascadia Mono", "JetBrains Mono", "Consolas", "ui-monospace", "monospace"],
+).set(
+    body_background_fill="#f4f6fa",
+    block_background_fill="#ffffff",
+    block_border_width="1px",
+    block_border_color="#dbe1ea",
+    block_shadow="0 1px 2px rgba(15, 23, 42, 0.04)",
+    block_title_text_weight="600",
+    block_label_text_weight="600",
+    button_primary_background_fill="#1d4ed8",
+    button_primary_background_fill_hover="#1e40af",
+    button_primary_text_color="#ffffff",
+    button_secondary_background_fill="#ffffff",
+    button_secondary_border_color="#c3ccd9",
+    button_large_text_weight="600",
+)
+
+STUDIO_CSS = """
+.gradio-container { max-width: 1600px !important; margin: 0 auto; }
+.studio-header {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 55%, #1e3a8a 100%);
+    border-radius: 10px; padding: 22px 28px; margin-bottom: 14px; color: #f8fafc;
+}
+.studio-header h1 { margin: 0 0 6px 0; font-size: 1.55rem; font-weight: 650; letter-spacing: 0.1px; color: #ffffff; }
+.studio-header p { margin: 0 0 12px 0; color: #cbd5e1; font-size: 0.95rem; }
+.studio-chip {
+    display: inline-block; margin: 0 6px 6px 0; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid rgba(203, 213, 225, 0.35); background: rgba(148, 163, 184, 0.14);
+    color: #e2e8f0; font-size: 0.78rem; font-weight: 500; letter-spacing: 0.2px;
+}
+.tab-nav button, button[role="tab"] { font-weight: 600 !important; letter-spacing: 0.1px; }
+.prose table, .md table, .markdown-body table {
+    width: 100%; border-collapse: collapse; font-size: 0.86rem; display: block; overflow-x: auto;
+}
+.prose table th, .md table th, .markdown-body table th {
+    background: #eef2f7; color: #0f172a; text-align: left; font-weight: 650;
+    padding: 7px 10px; border: 1px solid #d5dce6; white-space: nowrap;
+}
+.prose table td, .md table td, .markdown-body table td { padding: 6px 10px; border: 1px solid #e3e8ef; vertical-align: top; }
+.prose table tbody tr:nth-child(even), .md table tbody tr:nth-child(even) { background: rgba(100, 116, 139, 0.06); }
+.prose h3, .md h3 { margin-top: 1.1em; padding-bottom: 4px; border-bottom: 1px solid #e3e8ef; font-weight: 650; }
+.prose h4, .md h4 { margin-top: 0.9em; font-weight: 650; color: #334155; }
+.prose code, .md code { font-size: 0.84em; border-radius: 4px; }
+footer { opacity: 0.75; }
+"""
+
+STUDIO_HEADER_HTML = """
+<div class="studio-header">
+  <h1>Staff+ RAG Engineering and Observability Studio</h1>
+  <p>Production retrieval-augmented generation with multi-tenant access control, auditable operations, and resilient microservices.</p>
+  <span class="studio-chip">Pre-filtered RBAC</span>
+  <span class="studio-chip">Tri-modal hybrid retrieval</span>
+  <span class="studio-chip">Cross-encoder reranking</span>
+  <span class="studio-chip">CRAG and Self-RAG</span>
+  <span class="studio-chip">Specialist subagents</span>
+  <span class="studio-chip">MCP and A2A</span>
+  <span class="studio-chip">Zero Trust</span>
+  <span class="studio-chip">SHA-256 audit ledger</span>
+</div>
+"""
+
+
+# --- Gradio 4-Tab Studio Layout ---
 
 with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
-    gr.Markdown(
-        "# 🏗️ Staff+ RAG Engineering & Observability Studio\n"
-        "**Pre-Filtered RBAC · Tri-Modal GraphRAG (`Milvus Dense` + `BM25` + `Entity Graph` via `RRF k=60` $\\rightarrow$ `Cross-Encoder`) · "
-        "Adaptive Query Router · Semantic Cache · Guardrails · LangGraph `CRAG`/`Self-RAG` · SSE Streaming**"
-    )
+    gr.HTML(STUDIO_HEADER_HTML)
 
     with gr.Tabs():
         # TAB 1: Ingestion, RBAC & Guardrails
@@ -855,17 +923,17 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
                         placeholder="Paste document text here or click 'Seed Enterprise Sample Corpus'...",
                     )
                     with gr.Row():
-                        ingest_btn = gr.Button("📥 Ingest Document", variant="primary")
-                        seed_btn = gr.Button("🚀 Seed Enterprise Sample Corpus (3 Docs)")
-                    with gr.Accordion("📄 NVIDIA PDF Layout & Table Ingestion (/ingest/pdf)", open=False):
+                        ingest_btn = gr.Button("Ingest Document", variant="primary")
+                        seed_btn = gr.Button("Seed Enterprise Sample Corpus (3 Docs)")
+                    with gr.Accordion("NVIDIA PDF Layout & Table Ingestion (/ingest/pdf)", open=False):
                         pdf_file_input = gr.File(label="Upload PDF Document", file_types=[".pdf"])
-                        pdf_ingest_btn = gr.Button("📄 Parse & Ingest PDF")
-                    with gr.Accordion("🔄 Shopify/Notion CDC Incremental Upsert & Delete (/ingest/cdc)", open=False):
+                        pdf_ingest_btn = gr.Button("Parse & Ingest PDF")
+                    with gr.Accordion("Shopify/Notion CDC Incremental Upsert & Delete (/ingest/cdc)", open=False):
                         with gr.Row():
                             cdc_ext_id = gr.Textbox(label="CDC external_id", value="catalog-policy-001")
                             cdc_action = gr.Dropdown(choices=["upsert", "delete"], value="upsert", label="CDC Action")
                             cdc_version = gr.Number(value=1, minimum=1, precision=0, label="Version")
-                        cdc_btn = gr.Button("🔄 Dispatch CDC Event")
+                        cdc_btn = gr.Button("Dispatch CDC Event")
 
                 with gr.Column(scale=1):
                     ingest_out = gr.Markdown(
@@ -901,12 +969,12 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
                     enable_guardrails_chk = gr.Checkbox(value=True, label="PII & Injection Guardrails")
 
                     with gr.Row():
-                        stream_btn = gr.Button("⚡ Stream Live (SSE)", variant="primary")
-                        multi_agent_btn = gr.Button("🤖 Run Multi-Agent Subagents")
-                        submit_btn = gr.Button("📤 Queue via RabbitMQ")
+                        stream_btn = gr.Button("Stream Live (SSE)", variant="primary")
+                        multi_agent_btn = gr.Button("Run Multi-Agent Subagents")
+                        submit_btn = gr.Button("Queue via RabbitMQ")
                     job_id_state = gr.State()
                     submission_out = gr.Markdown(value="_No active job submitted._")
-                    check_btn = gr.Button("🔄 Check RabbitMQ Job Result")
+                    check_btn = gr.Button("Check RabbitMQ Job Result")
 
                 with gr.Column(scale=2):
                     final_output = gr.Markdown(
@@ -914,19 +982,19 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
                         value="_Stream or submit a query to view the cited response._",
                     )
                     with gr.Row():
-                        fb_up_btn = gr.Button("👍 Helpful Response")
-                        fb_down_btn = gr.Button("👎 Needs Improvement")
+                        fb_up_btn = gr.Button("Helpful Response")
+                        fb_down_btn = gr.Button("Needs Improvement")
                         fb_status_md = gr.Markdown(value="_Rate response quality to log Zendesk-style feedback._")
                     trace_output = gr.Markdown(
                         label="Pipeline Trace & Tri-Modal Score Breakdown",
                         value="_Retrieval telemetry will appear here._",
                     )
-                    with gr.Accordion("🧭 Inverted RAG Taxonomy & Rule-Grounded JSON (DoorDash / Ramp)", open=False):
+                    with gr.Accordion("Inverted RAG Taxonomy & Rule-Grounded JSON (DoorDash / Ramp)", open=False):
                         taxonomy_labels_input = gr.Textbox(
                             label="Allowed Taxonomy Enum Labels (comma-separated)",
                             value="payment_ledger_quorum_incident, hsm_key_rotation_security, data_retention_encryption_policy, sovereign_compliance_escalation",
                         )
-                        structured_btn = gr.Button("🧭 Classify & Extract Rule-Grounded JSON")
+                        structured_btn = gr.Button("Classify & Extract Rule-Grounded JSON")
                         structured_json_out = gr.Code(
                             label="Validated StructuredQueryResponse JSON (/query-structured)",
                             language="json",
@@ -936,7 +1004,7 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
         # TAB 3: Quantitative RAG Evaluation & Ablation Suite
         with gr.TabItem("3. RAG Evaluation & Ablation Benchmark"):
             gr.Markdown(
-                "### 📈 Quantitative IR & RAG Ablation Suite\n"
+                "### Quantitative IR & RAG Ablation Suite\n"
                 "Benchmarks **Dense**, **Sparse (BM25)**, **Hybrid RRF**, **Hybrid + Cross-Encoder**, "
                 "and **Tri-Modal GraphRAG (Dense + BM25 + Entity Graph + Cross-Encoder)** across the Golden QA Dataset."
             )
@@ -946,42 +1014,42 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
                     value=True,
                     label="Enable P2.1 LLM-as-a-Judge & Human-Calibration Audit",
                 )
-                eval_btn = gr.Button("🧪 Run Full 5-Mode Retrieval Ablation Study", variant="primary")
+                eval_btn = gr.Button("Run Full 5-Mode Retrieval Ablation Study", variant="primary")
             eval_output = gr.Markdown(value="_Click 'Run Full 5-Mode Retrieval Ablation Study' to compute metrics._")
 
         # TAB 4: Compliance Audit & End-to-End Observability Center
-        with gr.TabItem("4. 🛡️ Compliance Audit & Observability Center"):
+        with gr.TabItem("4. Compliance Audit & Observability Center"):
             gr.Markdown(
-                "### 🛡️ System Audit, GDPR Article 17 Erasure & Full-Stack Observability\n"
+                "### System Audit, GDPR Article 17 Erasure & Full-Stack Observability\n"
                 "Inspect the **cryptographic SHA-256 audit chain**, **active document RBAC lineage**, "
                 "**Langfuse-compatible distributed traces & spans**, and live **Prometheus** metrics "
                 "(scraped by Grafana at `:3000` in Docker Compose)."
             )
             with gr.Row():
-                audit_refresh_btn = gr.Button("🔄 Refresh Audit & Observability Dashboard", variant="primary")
-                prewarm_btn = gr.Button("🔥 Pre-Warm Head Queries (Instacart)")
+                audit_refresh_btn = gr.Button("Refresh Audit & Observability Dashboard", variant="primary")
+                prewarm_btn = gr.Button("Pre-Warm Head Queries (Instacart)")
                 erase_doc_input = gr.Textbox(
                     label="GDPR Article 17 Erasure — Target doc_id",
-                    placeholder="Paste a doc_id from the Active Corpus table (e.g. doc_...)",
+                    placeholder="doc_id from Active Corpus",
                 )
-                erase_btn = gr.Button("🗑️ Erase Document (GDPR Art. 17)", variant="stop")
+                erase_btn = gr.Button("Erase Document (GDPR Art. 17)", variant="stop")
             erase_status_md = gr.Markdown(value="_Ready for compliance inspection or GDPR erasure._")
 
             audit_dossier_md = gr.Markdown(value="_Click 'Refresh Audit & Observability Dashboard' to load the compliance dossier._")
-            with gr.Accordion("🗄️ Agoda OpsBot Read-Only SQL Live Inventory Inspector (/inventory/sql-query)", open=False):
+            with gr.Accordion("Agoda OpsBot Read-Only SQL Live Inventory Inspector (/inventory/sql-query)", open=False):
                 sql_query_input = gr.Textbox(
                     label="Read-Only SELECT Query",
                     value="SELECT service_name, region, status, active_nodes, p95_latency_ms FROM service_inventory ORDER BY service_name",
                 )
-                sql_run_btn = gr.Button("▶️ Run Read-Only SQL Query")
+                sql_run_btn = gr.Button("Run Read-Only SQL Query")
                 sql_result_code = gr.Code(label="SQL Result JSON", language="json", value="{}")
-            with gr.Accordion("⚡ P4 Microservices Ops: Canary Flags, Blue-Green Track & Chaos Injector", open=False):
+            with gr.Accordion("P4 Microservices Ops: Canary Flags, Blue-Green Track & Chaos Injector", open=False):
                 with gr.Row():
                     ff_name_input = gr.Textbox(label="Canary Flag Name", value="rag_canary_reranker")
                     ff_enabled_chk = gr.Checkbox(value=True, label="Flag Enabled")
                     ff_pct_slider = gr.Slider(minimum=0, maximum=100, value=10, step=5, label="Canary Rollout %")
                     ff_track_dd = gr.Dropdown(choices=["blue", "green", "canary"], value="blue", label="Blue-Green Track")
-                ff_apply_btn = gr.Button("🚦 Apply Progressive Delivery Policy")
+                ff_apply_btn = gr.Button("Apply Progressive Delivery Policy")
                 with gr.Row():
                     chaos_enabled_chk = gr.Checkbox(value=False, label="Enable Gated Chaos Injection")
                     chaos_target_dd = gr.Dropdown(
@@ -992,7 +1060,7 @@ with gr.Blocks(title="Staff+ RAG Engineering Studio") as demo:
                     chaos_mode_dd = gr.Dropdown(choices=["failure", "latency"], value="failure", label="Chaos Mode")
                     chaos_rate_slider = gr.Slider(minimum=0.0, maximum=1.0, value=0.0, step=0.1, label="Failure Rate")
                     chaos_lat_slider = gr.Slider(minimum=0, maximum=2000, value=0, step=50, label="Latency (ms)")
-                chaos_apply_btn = gr.Button("🧪 Update Chaos Controller")
+                chaos_apply_btn = gr.Button("Update Chaos Controller")
                 p4_ops_status_md = gr.Markdown(value="_Progressive Delivery & Chaos controls ready._")
             audit_traces_md = gr.Markdown(value="_Distributed trace waterfall will appear here._")
             audit_ledger_md = gr.Markdown(value="_Tamper-evident SHA-256 audit ledger will appear here._")
@@ -1111,4 +1179,6 @@ if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",
         server_port=int(os.getenv("GRADIO_SERVER_PORT", "7860")),
+        theme=STUDIO_THEME,
+        css=STUDIO_CSS,
     )

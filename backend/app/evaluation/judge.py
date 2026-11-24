@@ -162,7 +162,7 @@ class RAGJudgeEvaluator:
 
     def _strip_citation_appendix(self, answer: str) -> str:
         """Removes the auto-appended evidence appendix and extractive mode banners before scoring claims."""
-        marker = "### 📚 Verified Inline Citations"
+        marker = "### Verified Inline Citations"
         if marker in answer:
             answer = answer.split(marker, 1)[0]
         # Strip extractive-mode framing banners emitted when Ollama is offline

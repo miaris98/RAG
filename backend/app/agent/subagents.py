@@ -189,19 +189,19 @@ class SupervisorOrchestrator:
                 subagent_results.append(web_data["result"])
 
         # Stage 2: Supervisor grounded synthesis combining specialist evidence
-        sections: List[str] = ["### 🤖 Multi-Agent Supervisor Synthesis"]
+        sections: List[str] = ["### Multi-Agent Supervisor Synthesis"]
         if retrieval_data.get("internal_markdown"):
-            sections.append(f"#### 📚 Internal Corpus Evidence (`retrieval_specialist`)\n{retrieval_data['internal_markdown']}")
+            sections.append(f"#### Internal Corpus Evidence (`retrieval_specialist`)\n{retrieval_data['internal_markdown']}")
         else:
             sections.append(
-                "#### 📚 Internal Corpus Evidence (`retrieval_specialist`)\n"
+                "#### Internal Corpus Evidence (`retrieval_specialist`)\n"
                 "No authorized internal documents passed the relevance threshold for your RBAC roles."
             )
 
         if sql_data is not None:
             sections.append(sql_data["sql_markdown"])
         if web_data is not None:
-            sections.append(f"#### 🌐 External Web Findings (`web_researcher`)\n{web_data['web_markdown']}")
+            sections.append(f"#### External Web Findings (`web_researcher`)\n{web_data['web_markdown']}")
 
         citations_raw = retrieval_data.get("citations_raw") or []
         bibliography = _format_citations_bibliography(citations_raw)

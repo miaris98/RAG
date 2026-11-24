@@ -191,7 +191,7 @@ def run_ablation_benchmark(req: EvaluationRequest) -> Dict[str, Any]:
 def _format_judge_markdown(judge_summary: Dict[str, Any], calibration: Dict[str, Any]) -> str:
     """Formats P2.1 LLM-as-a-Judge & Human Calibration summary into Markdown."""
     lines = [
-        "### ⚖️ P2.1 LLM-as-a-Judge & Human-Calibrated Generation Audit",
+        "### P2.1 LLM-as-a-Judge & Human-Calibrated Generation Audit",
         f"- **Human Calibration Agreement:** `{calibration['human_agreement_rate'] * 100:.1f}%` "
         f"(`{calibration['num_cases']}` golden cases | MAE: `{calibration['mean_absolute_error']:.3f}`)",
         f"- **Mean Faithfulness:** `{judge_summary['mean_faithfulness']:.3f}` | "
@@ -214,7 +214,7 @@ def _format_judge_markdown(judge_summary: Dict[str, Any], calibration: Dict[str,
 def _format_markdown_ablation_table(summaries: List[Dict[str, Any]], k: int) -> str:
     """Formats a Staff-level Markdown comparison table for the Gradio Eval Studio."""
     lines = [
-        f"### 📊 Retrieval Ablation Benchmark (`Top-K = {k}`, `N = {len(GOLDEN_QA_BENCHMARK)}` Golden Queries)",
+        f"### Retrieval Ablation Benchmark (`Top-K = {k}`, `N = {len(GOLDEN_QA_BENCHMARK)}` Golden Queries)",
         "",
         f"| Pipeline Mode | HitRate@{k} | MRR@{k} | NDCG@{k} | Context Precision@{k} | Mean Latency (ms) |",
         "| :--- | :---: | :---: | :---: | :---: | :---: |",
