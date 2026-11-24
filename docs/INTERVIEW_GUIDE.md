@@ -1,67 +1,86 @@
-# 🎯 Staff RAG Engineer Interview Guide & Architecture Walkthrough
+# 🎯 Staff+ RAG & Resilient Microservices Interview Guide
 
-This guide maps every module in this repository to the exact system design questions, mathematical formulations, and failure-mode analyses expected in **Senior / Staff RAG & Applied AI Engineer** interviews.
-
----
-
-## 1. The 90-Second Elevator Pitch
-
-> *"I architected a microservices-based, 100% local Production RAG platform orchestrated with Docker Compose, FastAPI, RabbitMQ, Milvus, and LangGraph. Rather than a naive top-$k$ dense retriever wrapped in a black-box ReAct prompt, the system implements a **Two-Stage Hybrid Retrieval Engine** (combining Milvus dense bi-encoder embeddings with BM25 lexical search via **Reciprocal Rank Fusion**, followed by **Cross-Encoder joint reranking** and sigmoid probability calibration). On the ingestion side, it uses **Small-to-Big Parent-Child chunking** with Anthropic-style contextual headers and **deterministic SHA-256 content hashing** for idempotent upserts. On the orchestration side, an explicit **LangGraph StateGraph** implements **Corrective RAG (CRAG)** relevance gating and **Self-RAG** citation & faithfulness verification. Finally, it includes a built-in **IR Ablation Benchmark** (`HitRate@K`, `MRR@K`, `NDCG@K`, `ContextPrecision@K`) comparing Dense, Sparse, Hybrid RRF, and Cross-Encoder Reranking live in the Gradio UI."*
+This guide is designed for **Senior / Staff / Principal Applied AI & Systems Design interviews**. Rather than focusing on mathematical formulas, it explains **why** the platform is designed the way it is, **how** the pieces fit together, the **engineering principles** enforced, the **tradeoffs and assumptions** made, and the **known gaps** to address for multi-replica cloud scale.
 
 ---
 
-## 2. Six Prototype Bugs Fixed in This Architecture (Great "War Stories" for Interviews)
+## 1. 90-Second Architecture Pitch
 
-Interviewers love asking: *"Tell me about a broken RAG system you diagnosed and re-architected."* Here are six concrete failure modes from the initial prototype and how our modular `backend/app/` architecture resolves them:
-
-| # | Legacy Anti-Pattern | Root Cause & Failure Mode | Staff-Level Fix in This Codebase |
-| :- | :--- | :--- | :--- |
-| **1** | **Per-Query Embedding Model Reload** | `HuggingFaceEmbeddings("all-MiniLM-L6-v2")` was instantiated inside `document_retriever()` on every tool call, reloading PyTorch weights on every request. | `ModelRegistry` ([embeddings.py](file:///c:/Users/miari/Desktop/RAG/backend/app/retrieval/embeddings.py)) uses a thread-safe double-checked locking singleton pattern. |
-| **2** | **Uncalibrated Top-$K$ Hallucination Trap** | `vector_db.similarity_search(query, k=5)` *always* returns 5 chunks if the DB is non-empty, regardless of vector distance. Combined with a prompt rule *"If document_retriever returns ANY text, accept it as absolute truth"*, unrelated queries forced hallucinations. | `CrossEncoderReranker` ([reranker.py](file:///c:/Users/miari/Desktop/RAG/backend/app/retrieval/reranker.py)) calibrates joint logits into $[0, 1]$ probabilities and prunes chunks below `RELEVANCE_THRESHOLD=0.25` via the CRAG gate ([nodes.py](file:///c:/Users/miari/Desktop/RAG/backend/app/agent/nodes.py)). |
-| **3** | **Dense-Only Blindness on Exact Identifiers** | Bi-encoders (`all-MiniLM-L6-v2`) compress text into 384 floats, losing exact out-of-vocabulary error codes (`ERR_LEDGER_9042`) or rotation IDs (`PD-EMEA-8821`). | `HybridRetrievalEngine` ([hybrid.py](file:///c:/Users/miari/Desktop/RAG/backend/app/retrieval/hybrid.py)) fuses Milvus dense search with `BM25Okapi` sparse lexical search via Reciprocal Rank Fusion ($k=60$). |
-| **4** | **Duplicate Chunk Poisoning on Re-Ingest** | Calling `/ingest` twice with the same document appended duplicate vectors into Milvus, causing top-$k$ results to fill with identical copies of a single chunk. | `ChunkingEngine` ([chunking.py](file:///c:/Users/miari/Desktop/RAG/backend/app/ingestion/chunking.py)) assigns deterministic SHA-256 content-addressable IDs (`chk_<sha256>`) and skips duplicates idempotently. |
-| **5** | **Container Network Isolation Bug** | `OLLAMA_BASE_URL` was set to `http://ollama:11434` in `docker-compose.yml`, but `main.py` hardcoded `http://host.docker.internal:11434/v1`. | `RAGSettings.llm_api_base` ([config.py](file:///c:/Users/miari/Desktop/RAG/backend/app/config.py)) dynamically derives `{OLLAMA_BASE_URL}/v1`. |
-| **6** | **2 GB+ Frontend Container Dependency Bloat** | `frontend/requirements.txt` installed `faiss-cpu`, `sentence-transformers`, `pymilvus`, and `langchain` even though `frontend/app.py` only made HTTP calls via `requests`. | Discovered via `graphify` Surprising Connections; stripped [frontend/requirements.txt](file:///c:/Users/miari/Desktop/RAG/frontend/requirements.txt) down to `gradio`, `requests`, and `pypdf`. |
+> *"I built a modular, 100% local-capable **Production RAG & Resilient Microservices Platform** using FastAPI, Milvus, RabbitMQ, LangGraph, Ollama, Gradio, Prometheus, and Grafana. Instead of a naive dense-only prototype, it uses **Pre-Filtered Multi-Tenant RBAC**, **Structure-Aware Parent-Child Chunking** with SHA-256 deduplication, and **Tri-Modal Hybrid Retrieval** (Dense + BM25 + 1-hop Entity Knowledge Graph) followed by calibrated Cross-Encoder reranking, MMR diversity, and Lost-in-the-Middle prompt ordering. Orchestration runs on an explicit **cyclic LangGraph StateGraph** (CRAG + Self-RAG) alongside **4 least-privilege Specialist Subagents**, **MCP**, and **Google A2A**. Finally, it is hardened with **P4 Resilient Microservices** patterns—bulkheads, bounded retries with jitter, `L0–L3` graceful degradation, dynamic service discovery, Saga compensating rollbacks, CQRS read projections, Zero Trust short-lived JWTs, Canary/Blue-Green feature flags, and gated Chaos Engineering."*
 
 ---
 
-## 3. Core Mathematical Formulations to Whiteboard
+## 2. Solution Design: Why & How
 
-### A. Reciprocal Rank Fusion (RRF)
-Why use RRF instead of linear combination $\alpha \cdot \text{score}_{\text{dense}} + (1 - \alpha) \cdot \text{score}_{\text{bm25}}$?
-- **Answer:** Cosine similarity is bounded in $[-1, 1]$, whereas BM25 scores are unbounded in $[0, \infty)$ and depend heavily on query length and corpus IDF distribution. Score normalization (min-max or z-score) is brittle across single-keyword vs. multi-clause queries. RRF is **scale-invariant** because it operates purely on rank positions:
-$$\text{RRF}(d) = \sum_{m \in \{\text{dense}, \text{sparse}\}} \frac{w_m}{k_{\text{rrf}} + \text{rank}_m(d)}, \quad k_{\text{rrf}} = 60$$
-- The smoothing constant $k_{\text{rrf}} = 60$ prevents a single high rank in one noisy modality from dominating a document that ranks consistently well (e.g., #2 and #3) across both modalities.
+### A. Ingestion & Knowledge Modeling (`backend/app/ingestion/`)
+- **Why:** Naive fixed-size character splitting breaks Markdown tables, splits code blocks mid-function, and loses document context. Re-ingesting the same document creates duplicate vectors that crowd out top-$K$ results.
+- **How:**
+  - **Parent-Child Chunking:** Small child chunks are indexed for high-precision retrieval, while larger parent windows are promoted for LLM synthesis so the model has full surrounding context.
+  - **Structure & Code Awareness:** Preserves Markdown tables and fenced code blocks, extracts Python AST and polyglot symbols, and prepends Anthropic-style contextual headers (with an optional Ollama LLM contextualizer).
+  - **Idempotent SHA-256 Deduplication & CDC:** Deterministic content-addressable chunk IDs (`chk_<hash>`) skip duplicates automatically; `POST /ingest/cdc` handles incremental upserts/deletes and invalidates stale cache entries.
+  - **PDF & Late Chunking:** NVIDIA-style layout/table PDF parsing (`POST /ingest/pdf`) and Perplexity-style late chunking boundary blending.
 
-### B. Bi-Encoder vs. Cross-Encoder Complexity & Calibration
-- **Bi-Encoder (`all-MiniLM-L6-v2`)**: Encodes documents offline $O(N)$ and queries online $O(1)$, enabling sub-linear Approximate Nearest Neighbor (HNSW/IVF) search in Milvus:
-  $$s_{\text{bi}}(q, d) = \frac{\langle E(q), E(d) \rangle}{\|E(q)\|_2 \|E(d)\|_2}$$
-- **Cross-Encoder (`cross-encoder/ms-marco-MiniLM-L-6-v2`)**: Concatenates $q$ and $d$ as `<s> q </s> d </s>` and runs full $O(|q + d|^2)$ self-attention across all layers. Too expensive for 1M chunks, but fast (~15–30ms) on the top $M = 12$ RRF candidates.
-- **Calibration ([reranker.py](file:///c:/Users/miari/Desktop/RAG/backend/app/retrieval/reranker.py))**: Raw Cross-Encoder outputs are unbounded logits $z \in (-\infty, +\infty)$. We apply temperature-scaled sigmoid calibration blended with lexical anchor recall:
-  $$P(\text{relevant} \mid q, d) = 0.82 \cdot \frac{1}{1 + \exp(-z / T)} + 0.18 \cdot \text{Recall}_{\text{lex}}(q, d)$$
+### B. Pre-Filtered RBAC & Tri-Modal Hybrid Retrieval (`backend/app/retrieval/`)
+- **Why:** Post-retrieval RBAC filtering leaks existence/timing or causes **recall starvation** (returning 0 results when top-$K$ matches belong to another tenant). Dense-only embeddings miss exact identifiers (`ERR_LEDGER_9042`, `PD-EMEA-8821`), and uncalibrated top-$K$ similarity forces hallucinations when no relevant doc exists.
+- **How:**
+  - **Pre-Filtering First:** `tenant_id`, `access_roles`, Airbnb tenant shard routing, and Spotify 4-level Semantic IDs filter candidates **before** any vector, BM25, or graph scoring.
+  - **Tri-Modal Fusion:** Dense (Milvus/local) + Sparse (`BM25Okapi`) + 1-hop Entity Knowledge Graph are fused via rank-based RRF, boosted by freshness time-decay and version precedence, then calibrated by a Cross-Encoder and pruned below `RELEVANCE_THRESHOLD=0.25`.
+  - **Post-Processing:** MMR removes near-duplicate chunks, and Lost-in-the-Middle reordering places highest-confidence evidence at the start and end of the prompt.
 
-### C. Information Retrieval Metrics ([metrics.py](file:///c:/Users/miari/Desktop/RAG/backend/app/evaluation/metrics.py))
-Given binary relevance vector $r = [r_1, r_2, \dots, r_K] \in \{0, 1\}^K$:
-- **HitRate@K**: $\mathbb{I}\left(\sum_{i=1}^K r_i > 0\right)$
-- **MRR@K**: $\frac{1}{\min \{i : r_i = 1\}}$ (rewards placing the relevant chunk at Rank 1)
-- **NDCG@K**:
-  $$\text{DCG}@K = \sum_{i=1}^K \frac{r_i}{\log_2(i + 1)}, \qquad \text{NDCG}@K = \frac{\text{DCG}@K}{\text{IDCG}@K}$$
+### C. Explicit Cyclic Orchestration, Subagents & Protocols (`backend/app/agent/`, `backend/app/a2a/`, `backend/mcp_server.py`)
+- **Why:** Open-ended ReAct loops are unpredictable with smaller local models—skipping tools, looping, or hallucinating arguments. Meanwhile, enterprise agents need least-privilege isolation and standard interoperability.
+- **How:**
+  - **Cyclic LangGraph `StateGraph`:** Guarantees bounded, instrumented execution (`Router -> Retrieve -> CRAG Gate -> [Web Search] -> Synthesize -> Self-RAG Faithfulness Check`), looping back only when faithfulness is low and retries remain.
+  - **4 Least-Privilege Specialist Subagents:** `retrieval_specialist`, `sql_ops_specialist` (strictly read-only `SELECT` against operational SQLite), `compliance_auditor`, and `web_researcher` run in parallel under `SupervisorOrchestrator` with a unified span waterfall.
+  - **MCP & Google A2A:** Exposes 5 RBAC-scoped MCP tools and a Google A2A server (`/.well-known/agent.json`, `POST /a2a`) with **Anti-Confused-Deputy** role ceilings (`PEER_AGENT_ROLE_CEILINGS`) so peer agents cannot escalate privileges.
+
+### D. Resilient Microservices, Zero Trust & Compliance (`backend/app/resilience/`, `gateway/`, `data/`, `security/`, `guardrails/`)
+- **Why:** In distributed AI systems, a slow LLM or search API can exhaust all worker threads and take down the entire gateway (cascading failure). Compliance requires provable auditability and surgical data erasure.
+- **How:**
+  - **Fault Isolation:** Per-dependency `BulkheadPool` compartments (`milvus_vector`, `ollama_llm`, `sql_opsbot`, `web_search`), bounded `retry_with_backoff` with jitter, and `CircuitBreaker` state machines drive an `L0–L3` **Graceful Degradation Matrix** (`GET /health/resilience`). Even if Ollama is down or under Chaos injection, core RAG degrades cleanly to citation-grounded extractive synthesis.
+  - **Data & Traffic:** `APIGatewayMiddleware` enforces sliding-window rate limiting (`429 Retry-After`), request correlation (`X-Request-Id`), and Blue-Green/Canary release headers (`X-Release-Track`). `SagaOrchestrator` provides reverse compensating rollbacks on ingestion/GDPR failure, and `CQRSReadProjection` decouples `O(1)` reads from write stores.
+  - **Zero Trust & GDPR:** Short-lived HS256 service JWTs (`ttl <= 300s`, `jti` replay cache) protect `/security/verify` and `/a2a`. `TamperEvidentAuditLogger` scrubs PII and managed secrets automatically and hash-chains every event with SHA-256; `DELETE /documents/{doc_id}` erases data across all stores and logs an immutable GDPR Article 17 record.
 
 ---
 
-## 4. Deep-Dive Interview Q&A
+## 3. Core Engineering Principles Followed
 
-### Q1: Why Small-to-Big (Parent-Child) Chunking instead of just using 1200-character chunks?
-- **Problem with large chunks for embedding:** A 1200-char chunk often discusses 3–4 subtopics. Its bi-encoder embedding is the centroid (average meaning) of all subtopics, diluting cosine similarity against a specific narrow user question.
-- **Problem with small chunks for generation:** A 350-char chunk matches a specific question with high cosine similarity, but strips away surrounding sentences, pronouns, preconditions, and caveats needed by the LLM.
-- **Parent-Child Solution ([chunking.py](file:///c:/Users/miari/Desktop/RAG/backend/app/ingestion/chunking.py)):** Index 380-char child chunks (with `[Document: Title | Source: URI | Section: Heading]` prefixes) for retrieval, and promote/deduplicate their 1200-char `parent_content` windows before synthesis.
+Codified in [constitution.md](file:///c:/Users/miari/Desktop/RAG/.specify/memory/constitution.md) and enforced by automated tests:
 
-### Q2: Why replace `create_react_agent` with an explicit LangGraph `StateGraph`?
-- Open-ended ReAct loops rely on the LLM deciding at every step which tool to call and when to stop. With smaller local models (`llama3.1:8b`), ReAct loops frequently skip tools, call the same tool repeatedly, or hallucinate tool arguments.
-- Our explicit `StateGraph` ([graph.py](file:///c:/Users/miari/Desktop/RAG/backend/app/agent/graph.py)) guarantees a bounded, predictable DAG execution with explicit latency instrumentation at every node:
-  `analyze_and_expand_query` $\rightarrow$ `retrieve_and_rerank` $\rightarrow$ `grade_retrieval_crag` $\rightarrow$ (`external_web_search`) $\rightarrow$ `synthesize_cited_answer` $\rightarrow$ `verify_faithfulness_self_rag`.
+1. **Pre-Filtered Security:** Authorization always precedes scoring; caches are strictly tenant- and role-scoped.
+2. **Groundedness Over Fluency:** Every internal claim requires `[Doc i]` citations and evidence quotes; low-confidence retrieval triggers abstention or web fallback rather than hallucination.
+3. **Idempotency Everywhere:** Content-addressable SHA-256 chunk IDs and CDC versioning make ingestion safe to retry.
+4. **Least Privilege & Zero Trust:** Subagents, SQL OpsBot, secrets, and A2A peers operate under minimal scoped permissions and short-lived replay-protected tokens.
+5. **Failure Isolation & Graceful Degradation:** Slow or failing external dependencies never crash core citation-grounded RAG.
+6. **Database-per-Service & Compensating Sagas:** Services own their datastores behind APIs; multi-store writes roll back cleanly on failure.
+7. **Eval-Driven & Test-Driven Development (EDD + TDD):** Every feature is backed by Red-Green-Verify tests (`89` tests) and a CI 5-mode IR regression gate.
 
-### Q3: How would you scale this system from 10K to 100M documents in production?
-1. **BM25 Tier**: Replace the in-memory `BM25Okapi` index with Milvus 2.4+ native **SPLADE / BM25 Sparse Vector fields** or OpenSearch, enabling distributed sharded hybrid search in a single network hop.
-2. **Vector Index Quantization**: Use **HNSW + Scalar Quantization (`SQ8`)** or **Product Quantization (`IVF_PQ`)** in Milvus with partitioned multi-tenancy keys (`partition_key=tenant_id`) to enforce ACLs at the storage layer before ANN scoring.
-3. **Async Ingestion Workers**: Route `/ingest` payloads through a dedicated `rag_ingestion_jobs` RabbitMQ queue so batch PDF parsing and GPU embedding generation scale horizontally without blocking API workers.
+---
+
+## 4. Key Tradeoffs & Assumptions
+
+| Decision | Alternative Considered | Why We Chose This | Key Assumption / Cost |
+| :--- | :--- | :--- | :--- |
+| **Explicit LangGraph `StateGraph`** | Open-ended `create_react_agent` loop | Deterministic DAG, bounded latency, per-node observability, reliable with local 8B models | Less ad-hoc flexibility for novel multi-step tool chains outside defined edges |
+| **Pre-Filtered RBAC + Local Hybrid Fallback** | Post-retrieval ACL filtering | Eliminates data leakage and recall starvation; works even when Milvus is offline | Assumes corpus metadata (`tenant_id`, `access_roles`) is accurately tagged at ingestion |
+| **In-Memory Singletons (Audit, CQRS, Discovery, Flags, Cache, `jti`)** | External Redis + PostgreSQL from day 1 | Zero external infra required for local `.venv` demos, fast CI (`<2 min`), deterministic tests | **Single-process assumption:** state is not shared across multiple horizontal replicas |
+| **Pure-Stdlib HS256 JWT + Local `SecretsProvider`** | External Vault + OIDC IdP | Self-contained Zero Trust verification (`jti` replay, `<=300s` TTL) without external auth servers | Assumes symmetric secret rotation is managed via environment/Vault in production |
+| **Rank-Based RRF + Cross-Encoder Calibration** | Linear score blending (`alpha * dense + beta * sparse`) | Scale-invariant across bounded cosine and unbounded BM25 scores | Adds ~15–30ms Cross-Encoder latency on top-$M$ candidates |
+| **Deterministic Extractive Fallback on LLM Failure** | Returning HTTP 500 when Ollama is down | Preserves `core_rag_available: true` (`L1_EXTRACTIVE_DEGRADED`) under outages or Chaos | Fallback answers are extractive/structured rather than abstractive prose |
+
+---
+
+## 5. Honest Gaps & Production Roadmap (Beyond Local Showcase)
+
+If asked *"What would you change before deploying this to multi-region production?"*, highlight these concrete gaps:
+
+1. **Externalize In-Memory State for Multi-Replica HPA:**
+   - Currently, the SHA-256 audit ledger, CQRS read model, Service Discovery registry, Feature Flags, Semantic Cache, and JWT `jti` replay cache live in process memory. Scaling `HorizontalPodAutoscaler` beyond 1 replica requires backing these with **Redis** (caches, rate limits, `jti` replay, flags) and **PostgreSQL / immutable object storage** (audit ledger, CQRS projections).
+2. **Distributed Sparse Search:**
+   - `BM25Okapi` is currently in-memory. At 10M–100M+ chunks, migrate sparse retrieval to **Milvus 2.4+ native Sparse/SPLADE vectors** or **OpenSearch** so dense + sparse hybrid search executes in a single distributed hop.
+3. **Asymmetric / KMS-Backed JWT Signing & Live Vault Integration:**
+   - Upgrade HS256 shared-secret JWTs to **RS256/EdDSA** with JWKS rotation and wire `SecretsProvider` directly to **HashiCorp Vault** or cloud KMS.
+4. **Live Multi-Container Integration in CI:**
+   - `scripts/docker_stack_smoke_test.py` validates the full 9-container Docker Compose stack, but CI currently runs unit/integration tests in-process without spinning up live Milvus, RabbitMQ, and Ollama containers.
+5. **Real-Time Streaming Evaluation & Drift Alerts:**
+   - Add automated background sampling of production queries into `RAGJudgeEvaluator` with Prometheus alerting on faithfulness or satisfaction drops.
