@@ -36,13 +36,14 @@ services:
   minio:
     image: cgr.dev/chainguard/minio:latest
     container_name: milvus-minio
+    user: "0:0"
     environment:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
     ports:
       - "9000:9000"
       - "9001:9001"
-    command: minio server /minio_data --console-address ":9001"
+    command: server /minio_data --console-address ":9001"
     networks:
       - rag-network
     volumes:
