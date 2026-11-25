@@ -80,12 +80,22 @@ $env:BACKEND_URL = "http://127.0.0.1:8000"
 ..\.venv\Scripts\python.exe app.py
 ```
 
-### Option B — Full Docker Compose Stack (Includes Milvus, RabbitMQ, Ollama, Prometheus, Grafana, MinIO)
+### Option B — Full Docker Compose Stack (Includes Milvus, RabbitMQ, Ollama, Prometheus, Grafana, MinIO, Attu)
+Make sure **Docker Desktop** is running, then start all 9 containers:
 ```powershell
 cd C:\Users\miari\Desktop\RAG
 docker-compose up -d --build
+```
+Check container status and pull the local LLM model (optional, for full Ollama prose):
+```powershell
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 docker exec -it ollama ollama pull llama3.1
 .\.venv\Scripts\python.exe scripts\docker_stack_smoke_test.py
+```
+To view logs or stop the stack:
+```powershell
+docker-compose logs -f fastapi-backend
+docker-compose down
 ```
 
 ---
